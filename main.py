@@ -11,6 +11,7 @@ import requests
 from bs4 import BeautifulSoup
 from abc import ABC, abstractmethod
 import mysql.connector
+from mysql.connector import Error as MySQLError
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -42,6 +43,33 @@ class PropertyListing:
     photos: List[str]
     listed_date: datetime
     source_url: str
+    
+    def validate(self) -> bool:
+        """Validate required fields are present and in correct format"""
+        try:
+            required_fields = ['listing_id', 'title', 'price']
+            return all(getattr(self, field) is not None for field in required_fields)
+        except AttributeError:
+            return False
+
+class DatabaseManager:
+    """Handle database connections and operations"""
+    
+    def __init__(self, config: Dict[str, str], max_retries: int = 3):
+        self.config = config
+        self.max_retries = max_retries
+        self.logger = logging.getLogger(self.__class__.__name__)
+
+    def get_connection(self) -> mysql.connector.MySQLConnection:
+        """Get database connection with retry logic"""
+        for attempt in range(self.max_retries):
+            try:
+                return mysql.connector.connect(**self.config)
+            except MySQLError as e:
+                if attempt == self.max_retries - 1:
+                    raise
+                self.logger.warning(f"Database connection attempt {attempt + 1} failed: {str(e)}")
+                time.sleep(2 ** attempt)  # Exponential backoff
 
 class BaseScraper(ABC):
     """Base scraper class with common functionality"""
@@ -55,6 +83,7 @@ class BaseScraper(ABC):
         }
         self.session = self._setup_session()
         self.setup_logging()
+        self.db_manager = DatabaseManager(self.db_config)
         self.last_request_time = 0
         self.min_request_interval = float(os.getenv('REQUEST_DELAY', '1'))
 
@@ -92,17 +121,21 @@ class BaseScraper(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def _make_request(self, url: str, params: Dict = None) -> requests.Response:
-        """Make a rate-limited request"""
+        """Make a rate-limited request with improved error handling"""
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         
         if time_since_last_request < self.min_request_interval:
             time.sleep(self.min_request_interval - time_since_last_request)
         
-        response = self.session.get(url, params=params, timeout=30)
-        self.last_request_time = time.time()
-        
-        return response
+        try:
+            response = self.session.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            self.last_request_time = time.time()
+            return response
+        except requests.RequestException as e:
+            self.logger.error(f"Request failed for URL {url}: {str(e)}")
+            raise
 
     @abstractmethod
     def get_listings_page(self, page: int) -> List[Dict[str, Any]]:
@@ -115,9 +148,15 @@ class BaseScraper(ABC):
         pass
 
     def save_to_db(self, listing: PropertyListing):
-        """Save listing to database"""
+        """Save listing to database with improved error handling"""
+        if not listing.validate():
+            self.logger.error(f"Invalid listing data for ID {listing.listing_id}")
+            return
+
+        conn = None
+        cursor = None
         try:
-            conn = mysql.connector.connect(**self.db_config)
+            conn = self.db_manager.get_connection()
             cursor = conn.cursor()
             
             query = """
@@ -126,7 +165,7 @@ class BaseScraper(ABC):
                     price, currency, rooms, area, floor, total_floors,
                     location, district, metro_station, description,
                     contact_type, contact_phone, address, latitude,
-                    longitude, photos, listed_date, source_url
+                    longitude, photos, listing_date, source_url
                 ) VALUES (
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
@@ -167,12 +206,15 @@ class BaseScraper(ABC):
             conn.commit()
             self.logger.info(f"Saved listing {listing.listing_id} to database")
             
-        except Exception as e:
-            self.logger.error(f"Error saving to database: {str(e)}")
+        except MySQLError as e:
+            self.logger.error(f"Database error for listing {listing.listing_id}: {str(e)}")
+            if conn:
+                conn.rollback()
             raise
         finally:
-            if conn.is_connected():
+            if cursor:
                 cursor.close()
+            if conn and conn.is_connected():
                 conn.close()
 
 class ArendaScraper(BaseScraper):
@@ -185,7 +227,7 @@ class ArendaScraper(BaseScraper):
         super().__init__()
 
     def get_listings_page(self, page: int) -> List[Dict[str, Any]]:
-        """Get all listings from a page"""
+        """Get all listings from a page with improved error handling"""
         params = {
             'home_search': '1',
             'lang': '1',
@@ -196,22 +238,37 @@ class ArendaScraper(BaseScraper):
         
         try:
             response = self._make_request(self.LISTINGS_URL, params=params)
-            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
             listings = []
             for item in soup.select('li.new_elan_box'):
                 try:
+                    # Safely extract elements with proper error handling
+                    id_elem = item.get('id', '')
+                    url_elem = item.select_one('a')
+                    title_elem = item.select_one('.elan_property_title')
+                    price_elem = item.select_one('.elan_price')
+                    
+                    if not all([id_elem, url_elem, title_elem, price_elem]):
+                        self.logger.warning(f"Missing required elements in listing item")
+                        continue
+
                     listing = {
-                        'id': item.get('id', '').replace('elan_', ''),
-                        'url': item.select_one('a')['href'],
-                        'title': item.select_one('.elan_property_title').text.strip(),
-                        'price': self._extract_price(item.select_one('.elan_price').text),
+                        'id': id_elem.replace('elan_', ''),
+                        'url': url_elem['href'],
+                        'title': title_elem.text.strip(),
+                        'price': self._extract_price(price_elem.text),
                         'rooms': self._extract_rooms(item),
                         'area': self._extract_area(item),
                         'floor_info': self._extract_floor_info(item)
                     }
-                    listings.append(listing)
+                    
+                    # Only add listing if it has minimum required data
+                    if listing['id'] and listing['url'] and listing['title']:
+                        listings.append(listing)
+                    else:
+                        self.logger.warning(f"Skipping listing due to missing required data")
+                        
                 except Exception as e:
                     self.logger.error(f"Error processing listing item: {str(e)}")
                     continue
@@ -223,15 +280,23 @@ class ArendaScraper(BaseScraper):
             raise
 
     def get_listing_details(self, url: str) -> PropertyListing:
-        """Get details of a specific listing"""
+        """Get details of a specific listing with improved error handling"""
         try:
             response = self._make_request(url)
-            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            lat = soup.find('input', {'id': 'lat'})['value'] if soup.find('input', {'id': 'lat'}) else None
-            lon = soup.find('input', {'id': 'lon'})['value'] if soup.find('input', {'id': 'lon'}) else None
-            coordinates = (float(lat), float(lon)) if lat and lon else (None, None)
+            # Extract coordinates with validation
+            lat = soup.find('input', {'id': 'lat'})
+            lon = soup.find('input', {'id': 'lon'})
+            
+            lat_val = lat['value'] if lat else None
+            lon_val = lon['value'] if lon else None
+            
+            try:
+                coordinates = (float(lat_val), float(lon_val)) if lat_val and lon_val else (None, None)
+            except (ValueError, TypeError):
+                coordinates = (None, None)
+                self.logger.warning(f"Invalid coordinates for listing URL {url}")
             
             listing = PropertyListing(
                 listing_id=self._extract_listing_id(soup),
@@ -257,6 +322,9 @@ class ArendaScraper(BaseScraper):
                 source_url=url
             )
             
+            if not listing.validate():
+                self.logger.warning(f"Listing validation failed for URL {url}")
+                
             return listing
             
         except Exception as e:
@@ -264,79 +332,194 @@ class ArendaScraper(BaseScraper):
             raise
 
     def _extract_price(self, price_text: str) -> Optional[float]:
-        """Extract price from text"""
+        """Extract price from text with improved cleaning"""
+        if not price_text:
+            return None
+            
         try:
-            return float(price_text.replace('AZN', '').replace(' ', '').strip())
+            price_clean = ''.join(c for c in price_text if c.isdigit())
+            return float(price_clean) if price_clean else None
         except Exception as e:
             self.logger.error(f"Error extracting price: {str(e)}")
             return None
 
     def _extract_rooms(self, item) -> Optional[int]:
-        """Extract number of rooms"""
+        """Extract number of rooms with improved handling"""
+        if not item:
+            return None
+            
         try:
-            rooms_text = item.select_one('td').text
-            return int(rooms_text.split()[0])
+            rooms_cell = item.select_one('td') or item.select_one('.n_elan_box_botom_params')
+            if not rooms_cell or not rooms_cell.text:
+                return None
+                
+            number = ''.join(c for c in rooms_cell.text if c.isdigit())
+            return int(number) if number and not number.startswith('0') else None
         except Exception as e:
             self.logger.error(f"Error extracting rooms: {str(e)}")
             return None
 
     def _extract_area(self, item) -> Optional[float]:
-        """Extract area in square meters"""
+        """Extract area in square meters with improved handling"""
+        if not item:
+            return None
+            
         try:
-            area_text = item.select('td')[1].text
-            return float(area_text.replace('m²', '').strip())
+            cells = item.select('td')
+            if len(cells) < 2:
+                return None
+                
+            area_text = cells[1].text.strip()
+            # Remove all non-digit characters except decimal point
+            area_clean = ''.join(c for c in area_text if c.isdigit() or c == '.')
+            
+            if not area_clean:
+                return None
+                
+            area_value = float(area_clean)
+            return area_value * 100 if 'sot' in area_text.lower() else area_value
+            
         except Exception as e:
             self.logger.error(f"Error extracting area: {str(e)}")
             return None
 
     def _extract_floor_info(self, item) -> Tuple[Optional[int], Optional[int]]:
-        """Extract floor and total floors information"""
+        """Extract floor and total floors information with improved handling"""
+        if not item:
+            return (None, None)
+            
         try:
-            floor_text = item.select('td')[2].text
-            floor_parts = floor_text.split('/')
-            if len(floor_parts) == 2:
-                current_floor = int(floor_parts[0].strip())
-                total_floors = int(floor_parts[1].split()[0].strip())
-                return (current_floor, total_floors)
+            cells = item.select('td')
+            if len(cells) < 3 or not cells[2].text:
+                return (None, None)
+                
+            floor_text = cells[2].text.strip()
+            if '/' not in floor_text:
+                return (None, None)
+            
+            floor_parts = floor_text.split('/', 1)
+            current = ''.join(c for c in floor_parts[0] if c.isdigit())
+            total = ''.join(c for c in floor_parts[1] if c.isdigit())
+            
+            if current and total:
+                return (int(current), int(total))
+            
         except Exception as e:
             self.logger.error(f"Error extracting floor info: {str(e)}")
         return (None, None)
 
+    def _extract_detailed_area(self, soup) -> Optional[float]:
+        """Extract area from detail page with improved handling"""
+        if not soup:
+            return None
+            
+        try:
+            area_element = soup.select_one('.elan_property_list li:nth-child(2) a')
+            if not area_element or not area_element.text:
+                return None
+                
+            area_text = area_element.text.strip()
+            area_clean = ''.join(c for c in area_text if c.isdigit() or c == '.')
+            
+            if not area_clean:
+                return None
+                
+            area_value = float(area_clean)
+            return area_value * 100 if 'sot' in area_text.lower() else area_value
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting detailed area: {str(e)}")
+        return None
+
+    def _extract_detailed_floor(self, soup) -> Tuple[Optional[int], Optional[int]]:
+        """Extract floor information from detail page with improved handling"""
+        if not soup:
+            return (None, None)
+            
+        try:
+            floor_element = soup.select_one('.elan_property_list li:nth-child(3) a')
+            if not floor_element or not floor_element.text:
+                return (None, None)
+                
+            floor_text = floor_element.text.strip()
+            if '/' not in floor_text:
+                return (None, None)
+                
+            floor_parts = floor_text.split('/')
+            if len(floor_parts) != 2:
+                return (None, None)
+                
+            current = ''.join(c for c in floor_parts[0] if c.isdigit())
+            total = ''.join(c for c in floor_parts[1] if c.isdigit())
+            
+            if current and total:
+                return (int(current), int(total))
+                
+        except Exception as e:
+            self.logger.error(f"Error extracting detailed floor: {str(e)}")
+        return (None, None)
+
     def _extract_listing_id(self, soup) -> Optional[str]:
-        """Extract listing ID from the page"""
+        """Extract listing ID from the page with improved handling"""
+        if not soup:
+            return None
+            
         try:
             code_element = soup.select_one('.elan_date_box_rside')
-            if code_element:
-                code_text = code_element.find(string=lambda text: 'Elanın kodu:' in text if text else False)
-                if code_text:
-                    return code_text.strip().split(': ')[1]
+            if not code_element:
+                return None
+                
+            code_text = code_element.find(string=lambda text: text and 'Elanın kodu:' in text)
+            if not code_text:
+                return None
+                
+            listing_id = code_text.strip().split(': ')[1]
+            return listing_id if listing_id else None
+            
         except Exception as e:
             self.logger.error(f"Error extracting listing ID: {str(e)}")
         return None
 
     def _extract_title(self, soup) -> Optional[str]:
-        """Extract title from the page"""
+        """Extract title from the page with improved handling"""
+        if not soup:
+            return None
+            
         try:
             title_element = soup.select_one('.elan_main_title')
-            return title_element.text.strip() if title_element else None
+            if title_element and title_element.text:
+                title = title_element.text.strip()
+                return title if title else None
         except Exception as e:
             self.logger.error(f"Error extracting title: {str(e)}")
         return None
 
     def _extract_property_type(self, soup) -> Optional[str]:
-        """Extract property type from title"""
+        """Extract property type from title with improved handling"""
+        if not soup:
+            return None
+            
         try:
             title = self._extract_title(soup)
             if title:
-                return title.split()[0]
+                words = title.split()
+                if words:
+                    return words[0]
         except Exception as e:
             self.logger.error(f"Error extracting property type: {str(e)}")
         return None
 
     def _extract_listing_type(self, soup) -> Optional[str]:
-        """Extract listing type (daily/monthly/sale)"""
+        """Extract listing type with improved handling"""
+        if not soup:
+            return None
+            
         try:
-            type_text = soup.select_one('.elan_property_title1').text.lower()
+            type_element = soup.select_one('.elan_property_title1')
+            if not type_element or not type_element.text:
+                return None
+                
+            type_text = type_element.text.lower()
             if 'günlük' in type_text:
                 return 'daily'
             elif 'aylıq' in type_text:
@@ -348,12 +531,18 @@ class ArendaScraper(BaseScraper):
         return None
 
     def _extract_detailed_price(self, soup) -> Optional[float]:
-        """Extract price from the detail page"""
+        """Extract price from detail page with improved handling"""
+        if not soup:
+            return None
+            
         try:
             price_element = soup.select_one('.elan_new_price_box')
-            if price_element:
-                price_text = price_element.text.strip()
-                return float(price_text.replace('M', '').strip())
+            if not price_element or not price_element.text:
+                return None
+                
+            price_text = price_element.text.strip()
+            price_clean = ''.join(c for c in price_text if c.isdigit())
+            return float(price_clean) if price_clean else None
         except Exception as e:
             self.logger.error(f"Error extracting detailed price: {str(e)}")
         return None
@@ -363,159 +552,196 @@ class ArendaScraper(BaseScraper):
         return 'AZN'  # Default currency for arenda.az
 
     def _extract_detailed_rooms(self, soup) -> Optional[int]:
-        """Extract number of rooms from detail page"""
+        """Extract number of rooms from detail page with improved handling"""
+        if not soup:
+            return None
+            
         try:
             rooms_element = soup.select_one('.elan_property_list li:first-child a')
-            if rooms_element:
-                rooms_text = rooms_element.text.strip()
-                return int(rooms_text.split()[0])
+            if not rooms_element or not rooms_element.text:
+                return None
+                
+            rooms_text = rooms_element.text.strip().split()[0]
+            return int(rooms_text) if rooms_text.isdigit() else None
         except Exception as e:
             self.logger.error(f"Error extracting detailed rooms: {str(e)}")
         return None
 
-    def _extract_detailed_area(self, soup) -> Optional[float]:
-        """Extract area from detail page"""
-        try:
-            area_element = soup.select_one('.elan_property_list li:nth-child(2) a')
-            if area_element:
-                area_text = area_element.text.strip()
-                return float(area_text.replace('m²', '').strip())
-        except Exception as e:
-            self.logger.error(f"Error extracting detailed area: {str(e)}")
-        return None
-
-    def _extract_detailed_floor(self, soup) -> Tuple[Optional[int], Optional[int]]:
-        """Extract floor information from detail page"""
-        try:
-            floor_element = soup.select_one('.elan_property_list li:nth-child(3) a')
-            if floor_element:
-                floor_text = floor_element.text.strip()
-                floor_parts = floor_text.split('/')
-                if len(floor_parts) == 2:
-                    current_floor = int(floor_parts[0].strip())
-                    total_floors = int(floor_parts[1].split()[0].strip())
-                    return (current_floor, total_floors)
-        except Exception as e:
-            self.logger.error(f"Error extracting detailed floor: {str(e)}")
-        return (None, None)
-
     def _extract_location(self, soup) -> Optional[str]:
-        """Extract location information"""
+        """Extract location information with improved handling"""
+        if not soup:
+            return None
+            
         try:
             location_element = soup.select_one('.elan_unvan_txt')
-            return location_element.text.strip() if location_element else None
+            if location_element and location_element.text:
+                location = location_element.text.strip()
+                return location if location else None
         except Exception as e:
             self.logger.error(f"Error extracting location: {str(e)}")
         return None
 
     def _extract_district(self, soup) -> Optional[str]:
-        """Extract district information"""
+        """Extract district information with improved handling"""
+        if not soup:
+            return None
+            
         try:
             district_element = soup.select_one('.elan_property_title.elan_unvan')
-            if district_element:
+            if district_element and district_element.text:
                 text = district_element.text.strip()
                 parts = text.split(',')
                 if len(parts) > 1:
-                    return parts[-1].strip()
+                    district = parts[-1].strip()
+                    return district if district else None
         except Exception as e:
             self.logger.error(f"Error extracting district: {str(e)}")
         return None
 
     def _extract_metro(self, soup) -> Optional[str]:
-        """Extract nearest metro station"""
+        """Extract nearest metro station with improved handling"""
+        if not soup:
+            return None
+            
         try:
             location_text = soup.select_one('.elan_property_title.elan_unvan')
-            if location_text and 'm.' in location_text.text:
+            if location_text and location_text.text and 'm.' in location_text.text:
                 parts = location_text.text.split(',')
                 for part in parts:
                     if 'm.' in part:
-                        return part.strip()
+                        metro = part.strip()
+                        return metro if metro else None
         except Exception as e:
             self.logger.error(f"Error extracting metro station: {str(e)}")
         return None
 
     def _extract_description(self, soup) -> Optional[str]:
-        """Extract property description"""
+        """Extract property description with improved handling"""
+        if not soup:
+            return None
+            
         try:
             desc_element = soup.select_one('.elan_info_txt')
-            return desc_element.text.strip() if desc_element else None
+            if desc_element and desc_element.text:
+                description = desc_element.text.strip()
+                return description if description else None
         except Exception as e:
             self.logger.error(f"Error extracting description: {str(e)}")
         return None
 
     def _extract_contact_type(self, soup) -> Optional[str]:
-        """Extract contact type (owner/agent)"""
+        """Extract contact type with improved handling"""
+        if not soup:
+            return None
+            
         try:
             contact_element = soup.select_one('.new_elan_user_info p')
-            return contact_element.text.strip() if contact_element else None
+            if contact_element and contact_element.text:
+                contact_type = contact_element.text.strip()
+                return contact_type if contact_type else None
         except Exception as e:
             self.logger.error(f"Error extracting contact type: {str(e)}")
         return None
 
     def _extract_phone(self, soup) -> Optional[str]:
-        """Extract contact phone number"""
+        """Extract contact phone number with improved handling"""
+        if not soup:
+            return None
+            
         try:
             phone_element = soup.select_one('.elan_in_tel')
-            if phone_element:
-                return phone_element.text.replace('(', '').replace(')', '').replace('-', '').strip()
+            if phone_element and phone_element.text:
+                phone = phone_element.text.replace('(', '').replace(')', '').replace('-', '').strip()
+                return phone if phone else None
         except Exception as e:
             self.logger.error(f"Error extracting phone: {str(e)}")
         return None
 
     def _extract_address(self, soup) -> Optional[str]:
-        """Extract full address"""
+        """Extract full address with improved handling"""
+        if not soup:
+            return None
+            
         try:
             address_element = soup.select_one('.elan_unvan_txt')
-            return address_element.text.strip() if address_element else None
+            if address_element and address_element.text:
+                address = address_element.text.strip()
+                return address if address else None
         except Exception as e:
             self.logger.error(f"Error extracting address: {str(e)}")
         return None
 
     def _extract_photos(self, soup) -> List[str]:
-        """Extract photo URLs"""
+        """Extract photo URLs with improved handling"""
+        if not soup:
+            return []
+            
         photos = []
         try:
-            # Find photo containers
             photo_elements = soup.select('.full.elan_img_box img')
             for img in photo_elements:
-                if 'data-src' in img.attrs:
-                    photos.append(img['data-src'])
-                elif 'src' in img.attrs and not img['src'].endswith('load.gif'):
-                    photos.append(img['src'])
+                photo_url = None
+                if img.get('data-src'):
+                    photo_url = img['data-src']
+                elif img.get('src') and not img['src'].endswith('load.gif'):
+                    photo_url = img['src']
+                    
+                if photo_url and photo_url.strip():
+                    photos.append(photo_url.strip())
         except Exception as e:
             self.logger.error(f"Error extracting photos: {str(e)}")
         return photos
 
     def _extract_date(self, soup) -> Optional[datetime]:
-        """Extract listing date"""
+        """Extract listing date with improved handling"""
+        if not soup:
+            return None
+            
         try:
             date_element = soup.select_one('.elan_date_box_rside')
-            if date_element:
-                date_text = date_element.find(string=lambda text: 'Elanın tarixi:' in text if text else False)
-                if date_text:
-                    date_str = date_text.strip().split(': ')[1]
-                    return datetime.strptime(date_str, '%d.%m.%Y')
+            if not date_element:
+                return None
+                
+            date_text = date_element.find(string=lambda text: text and 'Elanın tarixi:' in text)
+            if not date_text:
+                return None
+                
+            date_str = date_text.strip().split(': ')[1]
+            try:
+                return datetime.strptime(date_str, '%d.%m.%Y')
+            except ValueError:
+                self.logger.error(f"Invalid date format: {date_str}")
+                return None
+                
         except Exception as e:
             self.logger.error(f"Error extracting date: {str(e)}")
         return None
 
-
 def main():
+    """Main function with improved error handling and logging"""
+    scraper = None
     try:
         scraper = ArendaScraper()
         
-        # Scrape first 3 pages
         for page in range(1, 4):
             try:
-                scraper.logger.info(f"Processing page {page}")
+                scraper.logger.info(f"Starting to process page {page}")
                 listings = scraper.get_listings_page(page)
+                scraper.logger.info(f"Found {len(listings)} listings on page {page}")
                 
                 for listing in listings:
                     try:
                         scraper.logger.info(f"Processing listing {listing['id']}")
                         details = scraper.get_listing_details(listing['url'])
-                        scraper.save_to_db(details)
+                        
+                        if details.validate():
+                            scraper.save_to_db(details)
+                            scraper.logger.info(f"Successfully processed listing {listing['id']}")
+                        else:
+                            scraper.logger.warning(f"Skipping invalid listing {listing['id']}")
+                            
                         time.sleep(float(os.getenv('REQUEST_DELAY', '1')))
+                        
                     except Exception as e:
                         scraper.logger.error(f"Error processing listing {listing['id']}: {str(e)}")
                         continue
@@ -525,8 +751,16 @@ def main():
                 continue
 
     except Exception as e:
-        logging.error(f"Fatal error in main: {str(e)}")
+        if scraper:
+            scraper.logger.error(f"Fatal error in main: {str(e)}")
+        else:
+            logging.error(f"Fatal error in main before scraper initialization: {str(e)}")
         raise
 
+    finally:
+        if scraper:
+            scraper.logger.info("Scraping process completed")
+
 if __name__ == "__main__":
-    main()
+    main()        
+    
