@@ -377,4 +377,156 @@ class ArendaScraper(BaseScraper):
         """Extract area from detail page"""
         try:
             area_element = soup.select_one('.elan_property_list li:nth-child(2) a')
-            if
+            if area_element:
+                area_text = area_element.text.strip()
+                return float(area_text.replace('m²', '').strip())
+        except Exception as e:
+            self.logger.error(f"Error extracting detailed area: {str(e)}")
+        return None
+
+    def _extract_detailed_floor(self, soup) -> Tuple[Optional[int], Optional[int]]:
+        """Extract floor information from detail page"""
+        try:
+            floor_element = soup.select_one('.elan_property_list li:nth-child(3) a')
+            if floor_element:
+                floor_text = floor_element.text.strip()
+                floor_parts = floor_text.split('/')
+                if len(floor_parts) == 2:
+                    current_floor = int(floor_parts[0].strip())
+                    total_floors = int(floor_parts[1].split()[0].strip())
+                    return (current_floor, total_floors)
+        except Exception as e:
+            self.logger.error(f"Error extracting detailed floor: {str(e)}")
+        return (None, None)
+
+    def _extract_location(self, soup) -> Optional[str]:
+        """Extract location information"""
+        try:
+            location_element = soup.select_one('.elan_unvan_txt')
+            return location_element.text.strip() if location_element else None
+        except Exception as e:
+            self.logger.error(f"Error extracting location: {str(e)}")
+        return None
+
+    def _extract_district(self, soup) -> Optional[str]:
+        """Extract district information"""
+        try:
+            district_element = soup.select_one('.elan_property_title.elan_unvan')
+            if district_element:
+                text = district_element.text.strip()
+                parts = text.split(',')
+                if len(parts) > 1:
+                    return parts[-1].strip()
+        except Exception as e:
+            self.logger.error(f"Error extracting district: {str(e)}")
+        return None
+
+    def _extract_metro(self, soup) -> Optional[str]:
+        """Extract nearest metro station"""
+        try:
+            location_text = soup.select_one('.elan_property_title.elan_unvan')
+            if location_text and 'm.' in location_text.text:
+                parts = location_text.text.split(',')
+                for part in parts:
+                    if 'm.' in part:
+                        return part.strip()
+        except Exception as e:
+            self.logger.error(f"Error extracting metro station: {str(e)}")
+        return None
+
+    def _extract_description(self, soup) -> Optional[str]:
+        """Extract property description"""
+        try:
+            desc_element = soup.select_one('.elan_info_txt')
+            return desc_element.text.strip() if desc_element else None
+        except Exception as e:
+            self.logger.error(f"Error extracting description: {str(e)}")
+        return None
+
+    def _extract_contact_type(self, soup) -> Optional[str]:
+        """Extract contact type (owner/agent)"""
+        try:
+            contact_element = soup.select_one('.new_elan_user_info p')
+            return contact_element.text.strip() if contact_element else None
+        except Exception as e:
+            self.logger.error(f"Error extracting contact type: {str(e)}")
+        return None
+
+    def _extract_phone(self, soup) -> Optional[str]:
+        """Extract contact phone number"""
+        try:
+            phone_element = soup.select_one('.elan_in_tel')
+            if phone_element:
+                return phone_element.text.replace('(', '').replace(')', '').replace('-', '').strip()
+        except Exception as e:
+            self.logger.error(f"Error extracting phone: {str(e)}")
+        return None
+
+    def _extract_address(self, soup) -> Optional[str]:
+        """Extract full address"""
+        try:
+            address_element = soup.select_one('.elan_unvan_txt')
+            return address_element.text.strip() if address_element else None
+        except Exception as e:
+            self.logger.error(f"Error extracting address: {str(e)}")
+        return None
+
+    def _extract_photos(self, soup) -> List[str]:
+        """Extract photo URLs"""
+        photos = []
+        try:
+            # Find photo containers
+            photo_elements = soup.select('.full.elan_img_box img')
+            for img in photo_elements:
+                if 'data-src' in img.attrs:
+                    photos.append(img['data-src'])
+                elif 'src' in img.attrs and not img['src'].endswith('load.gif'):
+                    photos.append(img['src'])
+        except Exception as e:
+            self.logger.error(f"Error extracting photos: {str(e)}")
+        return photos
+
+    def _extract_date(self, soup) -> Optional[datetime]:
+        """Extract listing date"""
+        try:
+            date_element = soup.select_one('.elan_date_box_rside')
+            if date_element:
+                date_text = date_element.find(string=lambda text: 'Elanın tarixi:' in text if text else False)
+                if date_text:
+                    date_str = date_text.strip().split(': ')[1]
+                    return datetime.strptime(date_str, '%d.%m.%Y')
+        except Exception as e:
+            self.logger.error(f"Error extracting date: {str(e)}")
+        return None
+
+
+def main():
+    try:
+        scraper = ArendaScraper()
+        
+        # Scrape first 3 pages
+        for page in range(1, 4):
+            try:
+                scraper.logger.info(f"Processing page {page}")
+                listings = scraper.get_listings_page(page)
+                
+                for listing in listings:
+                    try:
+                        scraper.logger.info(f"Processing listing {listing['id']}")
+                        details = scraper.get_listing_details(listing['url'])
+                        scraper.save_to_db(details)
+                        time.sleep(float(os.getenv('REQUEST_DELAY', '1')))
+                    except Exception as e:
+                        scraper.logger.error(f"Error processing listing {listing['id']}: {str(e)}")
+                        continue
+                        
+            except Exception as e:
+                scraper.logger.error(f"Error processing page {page}: {str(e)}")
+                continue
+
+    except Exception as e:
+        logging.error(f"Fatal error in main: {str(e)}")
+        raise
+
+if __name__ == "__main__":
+    main()
