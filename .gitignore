@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.vscode
+
 # C extensions
 *.so
 
@@ -169,3 +171,5 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+.codegpt
