@@ -1,106 +1,158 @@
-# Real Estate Project
+# Real Estate Data Scraper
 
-## Table of Contents
-- [Introduction](#introduction)
-- [Features](#features)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Contributing](#contributing)
-- [License](#license)
-
-## Introduction
-Welcome to the Real Estate Project! This project is designed to help users manage and browse real estate listings efficiently. Whether you are a buyer, seller, or agent, this application provides the tools you need to navigate the real estate market.
+A robust Python-based web scraper designed to collect and store real estate listings from Azerbaijani property websites, with initial support for Arenda.az.
 
 ## Features
-- **Property Listings**: Browse and search through a comprehensive list of properties.
-- **User Authentication**: Secure login and registration for users.
-- **Favorites**: Save your favorite properties for easy access later.
-- **Property Details**: View detailed information about each property, including photos, descriptions, and pricing.
-- **Contact Agents**: Get in touch with real estate agents directly through the platform.
+
+- Automated scraping of property listings with extensive error handling
+- Robust rate limiting and retry mechanisms
+- Comprehensive data extraction including:
+  - Basic property information (title, type, price)
+  - Location details (address, district, metro station)
+  - Property specifications (rooms, area, floor)
+  - Contact information
+  - Photos and descriptions
+- MySQL database integration for data storage
+- Detailed logging system
+- Environment-based configuration
+
+## Prerequisites
+
+- Python 3.8+
+- MySQL Server
+- Required Python packages (see requirements.txt)
 
 ## Installation
-To get started with the Real Estate Project, follow these steps:
 
-1. **Clone the repository**:
-    ```bash
-    git clone https://github.com/yourusername/real_estate.git
-    ```
-2. **Navigate to the project directory**:
-    ```bash
-    cd real_estate
-    ```
-3. **Install dependencies**:
-    ```bash
-    npm install
-    ```
-4. **Run the application**:
-    ```bash
-    npm start
-    ```
+1. Clone the repository:
+```bash
+git clone https://github.com/Ismat-Samadov/real_estate.git
+cd real_estate
+```
+
+2. Create and activate a virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+3. Install required packages:
+```bash
+pip install -r requirements.txt
+```
+
+4. Set up your environment variables by creating a `.env` file:
+```env
+DB_HOST=your_database_host
+DB_USER=your_database_user
+DB_PASSWORD=your_database_password
+DB_NAME=your_database_name
+REQUEST_DELAY=1
+MAX_RETRIES=5
+LOGGING_LEVEL=INFO
+```
+
+5. Create the database schema using the provided `schema.sql` file:
+```bash
+mysql -u your_user -p your_database < schema.sql
+```
+
+## Project Structure
+
+```
+real_estate/
+├── LICENSE
+├── README.md
+├── logs/
+│   └── scraper.log
+├── main.py
+├── requirements.txt
+└── schema.sql
+```
 
 ## Usage
-Once the application is up and running, you can start browsing properties, saving favorites, and contacting agents. For detailed usage instructions, refer to the [User Guide](docs/user_guide.md).
+
+Run the scraper:
+```bash
+python main.py
+```
+
+The scraper will:
+1. Start collecting listings from Arenda.az
+2. Process each listing to extract detailed information
+3. Store the data in the configured MySQL database
+4. Log all activities in `logs/scraper.log`
+
+## Database Schema
+
+The scraper stores data in a `properties` table with the following key fields:
+- `id`: Auto-incrementing primary key
+- `listing_id`: Unique identifier from the source website
+- `title`: Property title/headline
+- `property_type`: Type of property
+- `listing_type`: Category (daily/monthly/sale)
+- `price`: Property price
+- `rooms`: Number of rooms
+- `area`: Total area in square meters
+- `location`: Property location
+- Various timestamps and metadata fields
+
+## Error Handling
+
+The scraper implements several layers of error handling:
+- Request retries with exponential backoff
+- Database connection retry mechanism
+- Comprehensive error logging
+- Data validation before storage
+- Rate limiting to prevent server overload
+
+## Logging
+
+Logs are stored in `logs/scraper.log` and include:
+- Scraping progress and statistics
+- Error messages and stack traces
+- Database operations
+- Request/response information
 
 ## Contributing
-We welcome contributions from the community! To contribute, please follow these steps:
 
-1. Fork the repository.
-2. Create a new branch (`git checkout -b feature/your-feature`).
-3. Make your changes.
-4. Commit your changes (`git commit -m 'Add some feature'`).
-5. Push to the branch (`git push origin feature/your-feature`).
-6. Open a pull request.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more details.
-## Technologies Used
-This project is built using the following technologies:
 
-- **Frontend**:
-    - React: A JavaScript library for building user interfaces.
-    - Redux: A predictable state container for JavaScript apps.
-    - CSS: Styling the application.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-- **Backend**:
-    - Node.js: A JavaScript runtime built on Chrome's V8 JavaScript engine.
-    - Express: A minimal and flexible Node.js web application framework.
-    - MongoDB: A NoSQL database for storing property listings and user information.
+## Safety and Legal Considerations
 
-- **Authentication**:
-    - JWT (JSON Web Tokens): For secure user authentication.
+- Always respect the target website's robots.txt file
+- Implement appropriate rate limiting
+- Be mindful of the website's terms of service
+- Do not scrape personal or sensitive information
+- Store data in compliance with relevant data protection regulations
 
-- **Deployment**:
-    - Docker: Containerization of the application.
-    - AWS: Hosting the application on Amazon Web Services.
+## Future Improvements
 
-## Testing
-To ensure the quality and functionality of the application, we have implemented various tests:
+- Add support for more real estate websites
+- Implement data analysis and visualization features
+- Add API endpoints for data access
+- Enhance data validation and cleaning
+- Add support for proxy rotation
+- Implement automated testing
 
-1. **Unit Tests**:
-        - Run unit tests using Jest:
-        ```bash
-        npm run test
-        ```
+## Acknowledgments
 
-2. **Integration Tests**:
-        - Run integration tests to verify the interaction between different parts of the application.
+- Built with Python and MySQL
+- Uses BeautifulSoup4 for HTML parsing
+- Implements best practices for web scraping
 
-3. **End-to-End Tests**:
-        - Run end-to-end tests using Cypress:
-        ```bash
-        npm run e2e
-        ```
+## Author
 
-## Support
-If you encounter any issues or have any questions, please feel free to open an issue on the [GitHub repository](https://github.com/yourusername/real_estate/issues).
-
-## Acknowledgements
-We would like to thank the following resources and libraries that made this project possible:
-- React documentation
-- Node.js documentation
-- MongoDB documentation
-- Docker documentation
-- AWS documentation
+Ismat Samadov
 
 ## Contact
-For any inquiries or feedback, please contact us at support@realestateproject.com.
+
+- GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
