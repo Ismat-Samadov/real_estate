@@ -44,10 +44,10 @@ def get_db_connection():
         
         # Get database configuration from environment variables
         db_config = {
-            'host': os.getenv('DB_HOST', 'sql7.freemysqlhosting.net'),
-            'user': os.getenv('DB_USER', 'sql7756502'),
-            'password': os.getenv('DB_PASSWORD', 'hvh9kAbLZA'),
-            'database': os.getenv('DB_NAME', 'sql7756502'),
+            'host': os.getenv('DB_HOST'),
+            'user': os.getenv('DB_USER'),
+            'password': os.getenv('DB_PASSWORD'),
+            'database': os.getenv('DB_NAME'),
             'raise_on_warnings': True
         }
         
