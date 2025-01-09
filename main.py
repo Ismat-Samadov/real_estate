@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 from scrapers.arenda import OptimizedArendaScraper
+from scrapers.ev10 import EV10Scraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -13,22 +14,18 @@ def setup_logging():
     log_dir = Path('logs')
     log_dir.mkdir(exist_ok=True)
     
-    # Create a formatter
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
-    # Set up file handler
     file_handler = logging.FileHandler(log_dir / 'scraper.log')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     
-    # Set up console handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     
-    # Configure root logger
     logging.basicConfig(
         level=logging.DEBUG,
         handlers=[file_handler, console_handler]
@@ -39,10 +36,8 @@ def setup_logging():
 def get_db_connection():
     """Create database connection"""
     try:
-        # Load environment variables
         load_dotenv()
         
-        # Get database configuration from environment variables
         db_config = {
             'host': os.getenv('DB_HOST'),
             'user': os.getenv('DB_USER'),
@@ -51,7 +46,6 @@ def get_db_connection():
             'raise_on_warnings': True
         }
         
-        # Create the connection
         connection = mysql.connector.connect(**db_config)
         return connection
     except Error as e:
@@ -67,7 +61,6 @@ def save_listings_to_db(connection, listings):
     
     for listing in listings:
         try:
-            # Ensure all required fields exist with defaults
             sanitized_listing = {
                 'listing_id': listing.get('listing_id'),
                 'title': listing.get('title'),
@@ -76,10 +69,10 @@ def save_listings_to_db(connection, listings):
                 'district': listing.get('district'),
                 'address': listing.get('address'),
                 'location': listing.get('location'),
-                'rooms': listing.get('rooms', None),  # Default to NULL if missing
-                'area': listing.get('area', None),
-                'floor': listing.get('floor', None),
-                'total_floors': listing.get('total_floors', None),
+                'rooms': listing.get('rooms'),
+                'area': listing.get('area'),
+                'floor': listing.get('floor'),
+                'total_floors': listing.get('total_floors'),
                 'property_type': listing.get('property_type', 'unknown'),
                 'listing_type': listing.get('listing_type', 'unknown'),
                 'price': listing.get('price', 0),
@@ -87,12 +80,11 @@ def save_listings_to_db(connection, listings):
                 'contact_phone': listing.get('contact_phone'),
                 'whatsapp_available': listing.get('whatsapp_available', False),
                 'source_url': listing.get('source_url'),
-                'source_website': listing.get('source_website', 'arenda.az'),
+                'source_website': listing.get('source_website'),
                 'created_at': listing.get('created_at', datetime.datetime.now()),
                 'updated_at': listing.get('updated_at', datetime.datetime.now())
             }
             
-            # Prepare the SQL query
             insert_query = """
                 INSERT INTO properties (
                     listing_id, title, description, metro_station, district,
@@ -129,46 +121,64 @@ def save_listings_to_db(connection, listings):
     if failed > 0:
         logger.warning(f"Failed to save {failed} listings")
 
+async def run_scrapers():
+    """Run all scrapers and aggregate results"""
+    logger = logging.getLogger(__name__)
+    all_results = []
+    
+    # Get configuration from environment
+    load_dotenv()
+    pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages if not set
+    
+    scrapers = [
+        # ("Arenda.az", OptimizedArendaScraper()),
+        ("EV10.az", EV10Scraper())
+    ]
+    
+    logger.info(f"Starting scrapers with {pages} pages each")
+    
+    for name, scraper in scrapers:
+        try:
+            logger.info(f"Starting {name} scraper for {pages} pages")
+            results = await scraper.run(pages=pages)
+            logger.info(f"{name} scraper completed: {len(results)} listings from {pages} pages")
+            all_results.extend(results)
+        except Exception as e:
+            logger.error(f"Error running {name} scraper: {str(e)}", exc_info=True)
+    
+    return all_results
+
 async def main():
-    """Main async function to run the scraper"""
+    """Main async function to run scrapers"""
     logger = setup_logging()
     logger.info("Starting scraper application")
     connection = None
     
     try:
-        # Initialize and run scraper
-        scraper = OptimizedArendaScraper()
-        logger.info("Scraper initialized successfully")
-        
-        # Get database connection
         try:
             connection = get_db_connection()
-            logger.info("Database connection established successfully")
+            logger.info("Database connection established")
         except mysql.connector.Error as err:
-            logger.error(f"Failed to connect to database: {err}")
-            # Continue without database to at least test scraping
-            logger.info("Continuing without database to test scraping functionality")
+            logger.error(f"Database connection failed: {err}")
+            logger.info("Continuing to test scraping")
         
-        # Run scraper and get results
-        results = await scraper.run(pages=1)
-        logger.info(f"Successfully scraped {len(results)} listings")
+        results = await run_scrapers()
+        logger.info(f"All scrapers completed. Total listings: {len(results)}")
         
-        # Save results to database if we have a connection
-        if connection:
+        if connection and results:
             save_listings_to_db(connection, results)
-            logger.info("Data saved to database successfully")
-        else:
-            # Log the scraped data for debugging
-            logger.info(f"Scraped {len(results)} listings successfully")
-            logger.debug("First listing sample: %s", results[0] if results else "No results")
+            logger.info("Data saved to database")
+        elif results:
+            logger.info(f"Scraped {len(results)} listings")
+            logger.debug("Sample: %s", results[0])
         
     except Exception as e:
-        logger.error(f"Fatal error in main: {str(e)}", exc_info=True)
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
         raise
     finally:
-        if 'connection' in locals():
+        if connection:
             connection.close()
-        logger.info("Scraping application shutting down")
+        logger.info("Application shutting down")
 
 if __name__ == "__main__":
     asyncio.run(main())
