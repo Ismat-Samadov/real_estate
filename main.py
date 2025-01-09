@@ -52,75 +52,102 @@ def get_db_connection():
         logging.error(f"Error connecting to database: {e}")
         raise
 
+def ensure_connection(connection):
+    """Ensure database connection is alive and reconnect if needed"""
+    try:
+        connection.ping(reconnect=True, attempts=3, delay=5)
+    except mysql.connector.Error as err:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Database connection error: {err}")
+        try:
+            connection = get_db_connection()
+        except mysql.connector.Error as err:
+            logger.error(f"Failed to reconnect to database: {err}")
+            raise
+    return connection
+
 def save_listings_to_db(connection, listings):
     """Save listings to database with handling for missing fields"""
-    cursor = connection.cursor()
+    logger = logging.getLogger(__name__)
     successful = 0
     failed = 0
-    logger = logging.getLogger(__name__)
     
-    for listing in listings:
-        try:
-            sanitized_listing = {
-                'listing_id': listing.get('listing_id'),
-                'title': listing.get('title'),
-                'description': listing.get('description'),
-                'metro_station': listing.get('metro_station'),
-                'district': listing.get('district'),
-                'address': listing.get('address'),
-                'location': listing.get('location'),
-                'rooms': listing.get('rooms'),
-                'area': listing.get('area'),
-                'floor': listing.get('floor'),
-                'total_floors': listing.get('total_floors'),
-                'property_type': listing.get('property_type', 'unknown'),
-                'listing_type': listing.get('listing_type', 'unknown'),
-                'price': listing.get('price', 0),
-                'currency': listing.get('currency', 'AZN'),
-                'contact_phone': listing.get('contact_phone'),
-                'whatsapp_available': listing.get('whatsapp_available', False),
-                'source_url': listing.get('source_url'),
-                'source_website': listing.get('source_website'),
-                'created_at': listing.get('created_at', datetime.datetime.now()),
-                'updated_at': listing.get('updated_at', datetime.datetime.now())
-            }
+    try:
+        # Ensure connection is alive
+        connection = ensure_connection(connection)
+        cursor = connection.cursor()
+        
+        for listing in listings:
+            try:
+                sanitized_listing = {
+                    'listing_id': listing.get('listing_id'),
+                    'title': listing.get('title'),
+                    'description': listing.get('description'),
+                    'metro_station': listing.get('metro_station'),
+                    'district': listing.get('district'),
+                    'address': listing.get('address'),
+                    'location': listing.get('location'),
+                    'rooms': listing.get('rooms'),
+                    'area': listing.get('area'),
+                    'floor': listing.get('floor'),
+                    'total_floors': listing.get('total_floors'),
+                    'property_type': listing.get('property_type', 'unknown'),
+                    'listing_type': listing.get('listing_type', 'unknown'),
+                    'price': listing.get('price', 0),
+                    'currency': listing.get('currency', 'AZN'),
+                    'contact_phone': listing.get('contact_phone'),
+                    'whatsapp_available': listing.get('whatsapp_available', False),
+                    'source_url': listing.get('source_url'),
+                    'source_website': listing.get('source_website'),
+                    'created_at': listing.get('created_at', datetime.datetime.now()),
+                    'updated_at': listing.get('updated_at', datetime.datetime.now())
+                }
+                
+                insert_query = """
+                    INSERT INTO properties (
+                        listing_id, title, description, metro_station, district,
+                        address, location, rooms, area, floor, total_floors,
+                        property_type, listing_type, price, currency,
+                        contact_phone, whatsapp_available, source_url,
+                        source_website, created_at, updated_at
+                    ) VALUES (
+                        %(listing_id)s, %(title)s, %(description)s, %(metro_station)s,
+                        %(district)s, %(address)s, %(location)s, %(rooms)s,
+                        %(area)s, %(floor)s, %(total_floors)s, %(property_type)s,
+                        %(listing_type)s, %(price)s, %(currency)s, %(contact_phone)s,
+                        %(whatsapp_available)s, %(source_url)s, %(source_website)s,
+                        %(created_at)s, %(updated_at)s
+                    ) ON DUPLICATE KEY UPDATE
+                        updated_at = VALUES(updated_at),
+                        price = VALUES(price),
+                        title = VALUES(title),
+                        description = VALUES(description)
+                """
+                
+                cursor.execute(insert_query, sanitized_listing)
+                successful += 1
+                
+            except Exception as e:
+                failed += 1
+                logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
+                continue
             
-            insert_query = """
-                INSERT INTO properties (
-                    listing_id, title, description, metro_station, district,
-                    address, location, rooms, area, floor, total_floors,
-                    property_type, listing_type, price, currency,
-                    contact_phone, whatsapp_available, source_url,
-                    source_website, created_at, updated_at
-                ) VALUES (
-                    %(listing_id)s, %(title)s, %(description)s, %(metro_station)s,
-                    %(district)s, %(address)s, %(location)s, %(rooms)s,
-                    %(area)s, %(floor)s, %(total_floors)s, %(property_type)s,
-                    %(listing_type)s, %(price)s, %(currency)s, %(contact_phone)s,
-                    %(whatsapp_available)s, %(source_url)s, %(source_website)s,
-                    %(created_at)s, %(updated_at)s
-                ) ON DUPLICATE KEY UPDATE
-                    updated_at = VALUES(updated_at),
-                    price = VALUES(price),
-                    title = VALUES(title),
-                    description = VALUES(description)
-            """
+            # Commit every 50 listings
+            if successful % 50 == 0:
+                connection.commit()
+        
+        # Final commit
+        connection.commit()
+        cursor.close()
+        
+        logger.info(f"Successfully saved {successful} listings")
+        if failed > 0:
+            logger.warning(f"Failed to save {failed} listings")
             
-            cursor.execute(insert_query, sanitized_listing)
-            successful += 1
-            
-        except Exception as e:
-            failed += 1
-            logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
-            continue
+    except Exception as e:
+        logger.error(f"Database error: {str(e)}")
+        raise
     
-    connection.commit()
-    cursor.close()
-    
-    logger.info(f"Successfully saved {successful} listings")
-    if failed > 0:
-        logger.warning(f"Failed to save {failed} listings")
-
 async def run_scrapers():
     """Run all scrapers and aggregate results"""
     logger = logging.getLogger(__name__)
