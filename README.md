@@ -2,6 +2,14 @@
 
 A robust Python-based web scraper designed to collect and store real estate listings from Azerbaijani property websites, with initial support for Arenda.az.
 
+[bina.az](https://bina.az/)
+[yeniemlak](https://yeniemlak.az/)
+[emlak.az](https://emlak.az/)
+[lalafo.az](https://lalafo.az/)
+[tap.az](https://tap.az/)
+[ev10.az](https://ev10.az/)
+[arenda.az](https://arenda.az/)
+
 ## Features
 
 - Automated scraping of property listings with extensive error handling
