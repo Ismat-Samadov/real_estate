@@ -14,19 +14,24 @@ class EV10Scraper:
     API_BASE_URL = "https://ev10.az/api/v1.0/postings"
     DETAIL_API_URL = "https://ev10.az/api/v1.0/postings/{listing_id}"
     
-    # Define listing types mapping
+    # Define listing types and their configurations
     LISTING_TYPES = [
         {"sale_type": "HOME_SHARING", "db_type": "monthly"},
-        {"sale_type": "LEASE", "lease_type": "DAILY", "db_type": "daily"},
-        {"sale_type": "LEASE", "lease_type": "MONTHLY", "db_type": "monthly"},
-        {"sale_type": "PURCHASE", "db_type": "sale"}
+        {"sale_type": "PURCHASE", "db_type": "sale"},
+        {
+            "sale_type": "LEASE",
+            "subtypes": [
+                {"lease_type": "DAILY", "db_type": "daily"},
+                {"lease_type": "MONTHLY", "db_type": "monthly"}
+            ]
+        }
     ]
     
     def __init__(self):
         """Initialize the scraper with configuration"""
         self.logger = logging.getLogger(__name__)
         self.session = None
-        
+    
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""
         if not self.session:
@@ -133,10 +138,6 @@ class EV10Scraper:
     def parse_listing(self, listing: Dict, listing_type: Dict) -> Optional[Dict]:
         """Parse listing data into database schema format"""
         try:
-            # Log the raw listing data for debugging
-            self.logger.debug(f"Parsing listing data: {json.dumps(listing)[:1000]}...")
-            
-            # Extract listing ID
             listing_id = listing.get('id')
             if not listing_id:
                 self.logger.warning("Skipping listing without ID")
@@ -208,12 +209,60 @@ class EV10Scraper:
                 'source_website': 'ev10.az'
             }
             
-            self.logger.debug(f"Successfully parsed listing {listing_id}")
             return parsed
             
         except Exception as e:
             self.logger.error(f"Error parsing listing {listing.get('id', 'unknown')}: {str(e)}")
             return None
+
+    async def process_page(self, page: int, listing_type: Dict) -> List[Dict]:
+        """Process a single page of listings"""
+        listings = []
+        try:
+            self.logger.info(f"Processing page {page}")
+            response_data = await self.get_page_content(page, listing_type)
+            
+            if not response_data:
+                self.logger.warning("Empty response data")
+                return listings
+                
+            # Try different possible response structures
+            items = None
+            if 'data' in response_data:
+                items = response_data['data']
+            elif 'postings' in response_data:
+                items = response_data['postings']
+            elif 'items' in response_data:
+                items = response_data['items']
+            elif isinstance(response_data, list):
+                items = response_data
+                
+            if not items:
+                self.logger.warning("No listings found in response")
+                return listings
+                
+            self.logger.info(f"Found {len(items)} listings")
+            
+            for item in items:
+                try:
+                    if isinstance(item, str):
+                        listing_details = await self.get_listing_details(item)
+                        if listing_details:
+                            parsed = self.parse_listing(listing_details, listing_type)
+                            if parsed:
+                                listings.append(parsed)
+                    else:
+                        parsed = self.parse_listing(item, listing_type)
+                        if parsed:
+                            listings.append(parsed)
+                except Exception as e:
+                    self.logger.error(f"Error processing listing {item}: {str(e)}")
+                    continue
+                    
+        except Exception as e:
+            self.logger.error(f"Error processing page {page}: {str(e)}")
+            
+        return listings
 
     async def run(self, pages: int = 1) -> List[Dict]:
         """Run the scraper for specified number of pages"""
@@ -222,64 +271,30 @@ class EV10Scraper:
             await self.init_session()
             all_listings = []
             
-            # Iterate through each listing type
-            for listing_type in self.LISTING_TYPES:
-                self.logger.info(f"Processing {listing_type['sale_type']} listings")
-                
-                for page in range(1, pages + 1):
-                    try:
-                        self.logger.info(f"Processing page {page} for {listing_type['sale_type']}")
+            for listing_config in self.LISTING_TYPES:
+                if 'subtypes' in listing_config:
+                    # Handle LEASE type with its subtypes (DAILY, MONTHLY)
+                    for subtype in listing_config['subtypes']:
+                        listing_type = {
+                            'sale_type': listing_config['sale_type'],
+                            'lease_type': subtype['lease_type'],
+                            'db_type': subtype['db_type']
+                        }
+                        self.logger.info(f"Processing {listing_type['sale_type']} - {listing_type['lease_type']} listings")
                         
-                        # Get page data
-                        response_data = await self.get_page_content(page, listing_type)
-                        
-                        # Check response structure and extract listings
-                        if not response_data:
-                            self.logger.warning("Empty response data")
-                            continue
+                        for page in range(1, pages + 1):
+                            page_listings = await self.process_page(page, listing_type)
+                            all_listings.extend(page_listings)
                             
-                        # Try different possible response structures
-                        listings = None
-                        if 'data' in response_data:
-                            listings = response_data['data']
-                        elif 'postings' in response_data:
-                            listings = response_data['postings']
-                        elif 'items' in response_data:
-                            listings = response_data['items']
-                        elif isinstance(response_data, list):
-                            listings = response_data
-                            
-                        if not listings:
-                            self.logger.warning(f"No listings found in response for {listing_type['sale_type']} page {page}")
-                            self.logger.debug(f"Response structure: {json.dumps(list(response_data.keys()) if isinstance(response_data, dict) else 'Not a dict')}")
-                            continue
-                            
-                        self.logger.info(f"Found {len(listings)} listings on page {page}")
-                        
-                        # Process each listing
-                        for item in listings:
-                            try:
-                                # Handle both string IDs and full listing objects
-                                if isinstance(item, str):
-                                    listing_details = await self.get_listing_details(item)
-                                    if listing_details:
-                                        parsed = self.parse_listing(listing_details, listing_type)
-                                        if parsed:
-                                            all_listings.append(parsed)
-                                    else:
-                                        self.logger.warning(f"Could not fetch details for listing {item}")
-                                else:
-                                    parsed = self.parse_listing(item, listing_type)
-                                    if parsed:
-                                        all_listings.append(parsed)
-                            except Exception as e:
-                                self.logger.error(f"Error processing listing {item}: {str(e)}")
-                                continue
-                                
-                    except Exception as e:
-                        self.logger.error(f"Error processing page {page} for {listing_type['sale_type']}: {str(e)}")
-                        continue
+                else:
+                    # Handle non-LEASE types (HOME_SHARING, PURCHASE)
+                    listing_type = listing_config.copy()
+                    self.logger.info(f"Processing {listing_type['sale_type']} listings")
                     
+                    for page in range(1, pages + 1):
+                        page_listings = await self.process_page(page, listing_type)
+                        all_listings.extend(page_listings)
+            
             self.logger.info(f"Scraping completed. Total listings: {len(all_listings)}")
             return all_listings
             
