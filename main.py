@@ -158,7 +158,7 @@ async def run_scrapers():
     pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages if not set
     
     scrapers = [
-        # ("Arenda.az", OptimizedArendaScraper()),
+        ("Arenda.az", OptimizedArendaScraper()),
         ("EV10.az", EV10Scraper())
     ]
     
