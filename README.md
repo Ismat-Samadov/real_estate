@@ -1,36 +1,36 @@
 # Real Estate Data Scraper
 
-A robust Python-based web scraper designed to collect and store real estate listings from Azerbaijani property websites, with initial support for Arenda.az.
+A robust Python-based web scraper that collects and analyzes real estate listings from major Azerbaijani property websites.
 
-[bina.az](https://bina.az/)
-[yeniemlak](https://yeniemlak.az/)
-[emlak.az](https://emlak.az/)
-[lalafo.az](https://lalafo.az/)
-[tap.az](https://tap.az/)
-[ev10.az](https://ev10.az/)
-[arenda.az](https://arenda.az/)
+- [bina.az](https://bina.az)
+- [yeniemlak.az](https://yeniemlak.az)
+- [emlak.az](https://emlak.az)
+- [lalafo.az](https://lalafo.az)
+- [tap.az](https://tap.az)
+- [ev10.az](https://ev10.az)
 
-## Features
+## Key Features
 
-- Automated scraping of property listings with extensive error handling
-- Robust rate limiting and retry mechanisms
-- Comprehensive data extraction including:
-  - Basic property information (title, type, price)
-  - Location details (address, district, metro station)
-  - Property specifications (rooms, area, floor)
-  - Contact information
-  - Photos and descriptions
-- MySQL database integration for data storage
-- Detailed logging system
+- Asynchronous web scraping with comprehensive error handling and retry mechanisms
+- Intelligent rate limiting and anti-bot detection avoidance
+- Extensive data extraction including:
+  - Property details (type, price, rooms, area)
+  - Location information (address, district, metro station)
+  - Contact information and availability
+  - Media content (photos, descriptions)
+- Automated MySQL database integration
+- Comprehensive logging system
+- GitHub Actions workflow for automated scraping
 - Environment-based configuration
 
-## Prerequisites
+## Technical Requirements
 
-- Python 3.8+
+- Python 3.10+
 - MySQL Server
-- Required Python packages (see requirements.txt)
+- Virtual environment
+- Required Python packages (see `requirements.txt`)
 
-## Installation
+## Quick Start
 
 1. Clone the repository:
 ```bash
@@ -38,18 +38,14 @@ git clone https://github.com/Ismat-Samadov/real_estate.git
 cd real_estate
 ```
 
-2. Create and activate a virtual environment:
+2. Set up Python environment:
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-3. Install required packages:
-```bash
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Set up your environment variables by creating a `.env` file:
+3. Configure environment variables in `.env`:
 ```env
 DB_HOST=your_database_host
 DB_USER=your_database_user
@@ -60,107 +56,113 @@ MAX_RETRIES=5
 LOGGING_LEVEL=INFO
 ```
 
-5. Create the database schema using the provided `schema.sql` file:
+4. Initialize database:
 ```bash
 mysql -u your_user -p your_database < schema.sql
+```
+
+5. Run the scraper:
+```bash
+python main.py
 ```
 
 ## Project Structure
 
 ```
 real_estate/
-├── LICENSE
-├── README.md
+├── .github/
+│   └── workflows/
+│       └── scraper.yaml    # GitHub Actions workflow
+├── scrapers/
+│   ├── arenda.py          # Arenda.az scraper
+│   └── ev10.py            # Future ev10.az scraper
 ├── logs/
-│   └── scraper.log
-├── main.py
-├── requirements.txt
-└── schema.sql
+│   └── scraper.log        # Application logs
+├── main.py                # Application entry point
+├── requirements.txt       # Python dependencies
+├── schema.sql            # Database schema
+└── README.md             # This file
 ```
-
-## Usage
-
-Run the scraper:
-```bash
-python main.py
-```
-
-The scraper will:
-1. Start collecting listings from Arenda.az
-2. Process each listing to extract detailed information
-3. Store the data in the configured MySQL database
-4. Log all activities in `logs/scraper.log`
 
 ## Database Schema
 
-The scraper stores data in a `properties` table with the following key fields:
-- `id`: Auto-incrementing primary key
-- `listing_id`: Unique identifier from the source website
-- `title`: Property title/headline
-- `property_type`: Type of property
-- `listing_type`: Category (daily/monthly/sale)
-- `price`: Property price
-- `rooms`: Number of rooms
-- `area`: Total area in square meters
-- `location`: Property location
-- Various timestamps and metadata fields
+The `properties` table includes:
 
-## Error Handling
+- Primary identifiers (`id`, `listing_id`)
+- Property details (`title`, `rooms`, `area`, `floor`, `total_floors`)
+- Location information (`address`, `district`, `metro_station`)
+- Pricing data (`price`, `currency`, `listing_type`)
+- Contact information (`contact_phone`, `whatsapp_available`)
+- Rich content (`description`, `amenities`, `photos`)
+- Metadata (`created_at`, `updated_at`, `source_url`, `source_website`)
 
-The scraper implements several layers of error handling:
-- Request retries with exponential backoff
-- Database connection retry mechanism
+## Advanced Features
+
+### Error Handling
+- Exponential backoff for failed requests
+- Automatic retry mechanism for database operations
 - Comprehensive error logging
 - Data validation before storage
-- Rate limiting to prevent server overload
+- Rate limiting and request throttling
 
-## Logging
+### Logging System
+- Detailed logging in `logs/scraper.log`
+- Request/response tracking
+- Error tracing with stack traces
+- Performance metrics
+- Database operation logging
 
-Logs are stored in `logs/scraper.log` and include:
-- Scraping progress and statistics
-- Error messages and stack traces
-- Database operations
-- Request/response information
+### GitHub Actions Integration
+- Automated hourly scraping
+- Configurable schedule
+- Artifact upload for logs
+- Secret management for database credentials
+
+## Best Practices & Safety
+
+- Respect `robots.txt` directives
+- Implement rate limiting
+- Follow website terms of service
+- Avoid scraping personal data
+- GDPR-compliant data storage
+- User-agent rotation
+- Connection pooling
+- Error recovery mechanisms
+
+## Development Roadmap
+
+- [ ] Add support for additional websites
+- [ ] Implement data analysis features
+- [ ] Create API endpoints
+- [ ] Add proxy rotation
+- [ ] Enhance data validation
+- [ ] Add automated testing
+- [ ] Implement data visualization
+- [ ] Add caching layer
+- [ ] Create admin dashboard
 
 ## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
+2. Create your feature branch (`git checkout -b feature/NewFeature`)
+3. Commit changes (`git commit -m 'Add NewFeature'`)
+4. Push to branch (`git push origin feature/NewFeature`)
 5. Open a Pull Request
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Safety and Legal Considerations
-
-- Always respect the target website's robots.txt file
-- Implement appropriate rate limiting
-- Be mindful of the website's terms of service
-- Do not scrape personal or sensitive information
-- Store data in compliance with relevant data protection regulations
-
-## Future Improvements
-
-- Add support for more real estate websites
-- Implement data analysis and visualization features
-- Add API endpoints for data access
-- Enhance data validation and cleaning
-- Add support for proxy rotation
-- Implement automated testing
-
-## Acknowledgments
-
-- Built with Python and MySQL
-- Uses BeautifulSoup4 for HTML parsing
-- Implements best practices for web scraping
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Author
 
-Ismat Samadov
-
-## Contact
-
+**Ismat Samadov**
 - GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
+
+## Technologies Used
+
+- Python (asyncio, aiohttp)
+- MySQL
+- BeautifulSoup4
+- GitHub Actions
+- Environment management
+- Logging framework
