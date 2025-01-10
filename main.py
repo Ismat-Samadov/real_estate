@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from scrapers.arenda import OptimizedArendaScraper
 from scrapers.ev10 import EV10Scraper
 from scrapers.yeniemlak import YeniEmlakScraper
+from scrapers.emlak import EmlakAzScraper  
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -170,12 +171,13 @@ async def run_scrapers():
     
     # Get configuration from environment
     load_dotenv()
-    pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages if not set
+    pages = int(os.getenv('SCRAPER_PAGES', 2))  
     
     scrapers = [
-        ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper()),
-        ("YeniEmlak.az", YeniEmlakScraper())  
+        # ("Arenda.az", OptimizedArendaScraper()),
+        # ("EV10.az", EV10Scraper()),
+        # ("YeniEmlak.az", YeniEmlakScraper()),
+        ("Emlak.az", EmlakAzScraper()) 
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
