@@ -54,6 +54,7 @@ DB_NAME=your_database_name
 REQUEST_DELAY=1
 MAX_RETRIES=5
 LOGGING_LEVEL=INFO
+SCRAPER_PAGES=2
 ```
 
 4. Initialize database:
