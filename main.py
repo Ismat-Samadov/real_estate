@@ -5,6 +5,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from scrapers.arenda import OptimizedArendaScraper
 from scrapers.ev10 import EV10Scraper
+from scrapers.yeniemlak import YeniEmlakScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -87,6 +88,8 @@ def save_listings_to_db(connection, listings):
                     'district': listing.get('district'),
                     'address': listing.get('address'),
                     'location': listing.get('location'),
+                    'latitude': listing.get('latitude'),
+                    'longitude': listing.get('longitude'),
                     'rooms': listing.get('rooms'),
                     'area': listing.get('area'),
                     'floor': listing.get('floor'),
@@ -95,33 +98,45 @@ def save_listings_to_db(connection, listings):
                     'listing_type': listing.get('listing_type', 'unknown'),
                     'price': listing.get('price', 0),
                     'currency': listing.get('currency', 'AZN'),
+                    'contact_type': listing.get('contact_type'),
                     'contact_phone': listing.get('contact_phone'),
                     'whatsapp_available': listing.get('whatsapp_available', False),
+                    'views_count': listing.get('views_count', 0),
+                    'has_repair': listing.get('has_repair', False),
+                    'amenities': listing.get('amenities'),
+                    'photos': listing.get('photos'),
                     'source_url': listing.get('source_url'),
                     'source_website': listing.get('source_website'),
                     'created_at': listing.get('created_at', datetime.datetime.now()),
-                    'updated_at': listing.get('updated_at', datetime.datetime.now())
+                    'updated_at': listing.get('updated_at', datetime.datetime.now()),
+                    'listing_date': listing.get('listing_date')
                 }
                 
                 insert_query = """
                     INSERT INTO properties (
                         listing_id, title, description, metro_station, district,
-                        address, location, rooms, area, floor, total_floors,
-                        property_type, listing_type, price, currency,
-                        contact_phone, whatsapp_available, source_url,
-                        source_website, created_at, updated_at
+                        address, location, latitude, longitude, rooms, area, 
+                        floor, total_floors, property_type, listing_type, price, 
+                        currency, contact_type, contact_phone, whatsapp_available,
+                        views_count, has_repair, amenities, photos,
+                        source_url, source_website, created_at, updated_at, 
+                        listing_date
                     ) VALUES (
                         %(listing_id)s, %(title)s, %(description)s, %(metro_station)s,
-                        %(district)s, %(address)s, %(location)s, %(rooms)s,
-                        %(area)s, %(floor)s, %(total_floors)s, %(property_type)s,
-                        %(listing_type)s, %(price)s, %(currency)s, %(contact_phone)s,
-                        %(whatsapp_available)s, %(source_url)s, %(source_website)s,
-                        %(created_at)s, %(updated_at)s
+                        %(district)s, %(address)s, %(location)s, %(latitude)s,
+                        %(longitude)s, %(rooms)s, %(area)s, %(floor)s, 
+                        %(total_floors)s, %(property_type)s, %(listing_type)s,
+                        %(price)s, %(currency)s, %(contact_type)s, %(contact_phone)s,
+                        %(whatsapp_available)s, %(views_count)s,
+                        %(has_repair)s, %(amenities)s, %(photos)s, %(source_url)s,
+                        %(source_website)s, %(created_at)s, %(updated_at)s,
+                        %(listing_date)s
                     ) ON DUPLICATE KEY UPDATE
                         updated_at = VALUES(updated_at),
                         price = VALUES(price),
                         title = VALUES(title),
-                        description = VALUES(description)
+                        description = VALUES(description),
+                        views_count = VALUES(views_count)
                 """
                 
                 cursor.execute(insert_query, sanitized_listing)
@@ -158,8 +173,9 @@ async def run_scrapers():
     pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages if not set
     
     scrapers = [
-        ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper())
+        # ("Arenda.az", OptimizedArendaScraper()),
+        # ("EV10.az", EV10Scraper()),
+        ("YeniEmlak.az", YeniEmlakScraper())  
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
