@@ -180,3 +180,136 @@ INSERT INTO Credit_Risks (Credit_Rating, Risk_Level) VALUES
 (647, 'hIGH'),
 (648, 'High'),
 (649, 'High');
+
+
+-- First, let's segment customers by risk level, interest rate and delays:
+
+WITH CustomerSegments AS (
+  SELECT 
+    c.Customer_ID,
+    cr.Risk_Level,
+    CASE 
+      WHEN cr2.Interest_Rate < 5.0 THEN 'Low Interest'
+      WHEN cr2.Interest_Rate < 6.5 THEN 'Medium Interest'
+      ELSE 'High Interest'
+    END AS Interest_Category,
+    CASE 
+      WHEN cr2.Payment_Delays <= 0 THEN 'No Delays'
+      WHEN cr2.Payment_Delays <= 2 THEN 'Minor Delays'
+      ELSE 'Major Delays'
+    END AS Delay_Category
+  FROM Customers c
+  JOIN Credit_Risks cr ON c.Credit_Rating = cr.Credit_Rating
+  JOIN Credits cr2 ON c.Customer_ID = cr2.Customer_ID
+)
+SELECT 
+  Risk_Level,
+  Interest_Category,
+  Delay_Category,
+  COUNT(*) as Customer_Count
+FROM CustomerSegments
+GROUP BY Risk_Level, Interest_Category, Delay_Category
+ORDER BY Risk_Level, Interest_Category, Delay_Category;
+
+
+
+-- These queries will provide comprehensive insights into:
+
+-- Customer segmentation based on multiple factors
+-- Risk distribution across different customer groups
+-- Payment behavior patterns
+-- Credit amount and interest rate relationships
+-- Statistical analysis of risk and payment delays
+-- Age group risk distribution
+
+
+-- Let's analyze risk assessment by age group and income level:
+
+SELECT 
+  c.Age_Group,
+  c.Income_Level,
+  cr.Risk_Level,
+  COUNT(*) as Customer_Count,
+  AVG(cr2.Credit_Amount) as Avg_Credit_Amount,
+  AVG(cr2.Payment_Delays) as Avg_Delays
+FROM Customers c
+JOIN Credit_Risks cr ON c.Credit_Rating = cr.Credit_Rating
+JOIN Credits cr2 ON c.Customer_ID = cr2.Customer_ID
+WHERE c.Age_Group NOT IN ('*****', '***', 'QQQQ', 'Wwwwww', '@@@@@')
+GROUP BY c.Age_Group, c.Income_Level, cr.Risk_Level
+ORDER BY c.Age_Group, c.Income_Level, cr.Risk_Level;
+
+
+-- Payment delays analysis:
+
+SELECT 
+  cr.Risk_Level,
+  COUNT(*) as Total_Customers,
+  COUNT(CASE WHEN c.Payment_Delays > 0 THEN 1 END) as Customers_With_Delays,
+  AVG(c.Payment_Delays) as Avg_Delay_Days,
+  MAX(c.Payment_Delays) as Max_Delay_Days,
+  MIN(c.Payment_Delays) as Min_Delay_Days
+FROM Customers cust
+JOIN Credit_Risks cr ON cust.Credit_Rating = cr.Credit_Rating
+JOIN Credits c ON cust.Customer_ID = c.Customer_ID
+GROUP BY cr.Risk_Level
+ORDER BY AVG(c.Payment_Delays) DESC;
+
+
+-- Credit amount and interest rate relationship analysis:
+
+SELECT 
+  cr.Risk_Level,
+  ROUND(AVG(c.Credit_Amount), 2) as Avg_Credit_Amount,
+  ROUND(AVG(c.Interest_Rate), 2) as Avg_Interest_Rate,
+  COUNT(*) as Number_of_Customers,
+  MIN(c.Credit_Amount) as Min_Credit,
+  MAX(c.Credit_Amount) as Max_Credit
+FROM Customers cust
+JOIN Credit_Risks cr ON cust.Credit_Rating = cr.Credit_Rating
+JOIN Credits c ON cust.Customer_ID = c.Customer_ID
+GROUP BY cr.Risk_Level
+ORDER BY Avg_Credit_Amount DESC;
+
+
+-- Statistical analysis of risk levels and delays:
+
+WITH RiskStats AS (
+  SELECT 
+    cr.Risk_Level,
+    COUNT(*) as Sample_Size,
+    AVG(c.Payment_Delays) as Mean_Delays,
+    SQRT(AVG(c.Payment_Delays * c.Payment_Delays) - AVG(c.Payment_Delays) * AVG(c.Payment_Delays)) as StdDev_Delays,
+    MIN(c.Payment_Delays) as Min_Delays,
+    MAX(c.Payment_Delays) as Max_Delays
+  FROM Customers cust
+  JOIN Credit_Risks cr ON cust.Credit_Rating = cr.Credit_Rating
+  JOIN Credits c ON cust.Customer_ID = c.Customer_ID
+  GROUP BY cr.Risk_Level
+)
+SELECT 
+  Risk_Level,
+  Sample_Size,
+  ROUND(Mean_Delays, 2) as Mean_Delays,
+  ROUND(StdDev_Delays, 2) as StdDev_Delays,
+  Min_Delays,
+  Max_Delays
+FROM RiskStats
+ORDER BY Mean_Delays DESC;
+
+
+-- Age group and risk level distribution:
+
+SELECT 
+  c.Age_Group,
+  cr.Risk_Level,
+  COUNT(*) as Customer_Count,
+  ROUND(AVG(c2.Credit_Amount), 2) as Avg_Credit_Amount,
+  ROUND(AVG(c2.Payment_Delays), 2) as Avg_Delays
+FROM Customers c
+JOIN Credit_Risks cr ON c.Credit_Rating = cr.Credit_Rating
+JOIN Credits c2 ON c.Customer_ID = c2.Customer_ID
+WHERE c.Age_Group NOT IN ('*****', '***', 'QQQQ', 'Wwwwww', '@@@@@')
+GROUP BY c.Age_Group, cr.Risk_Level
+ORDER BY c.Age_Group, cr.Risk_Level;
+
