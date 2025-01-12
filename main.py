@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 from scrapers.arenda import OptimizedArendaScraper
 from scrapers.ev10 import EV10Scraper
 from scrapers.yeniemlak import YeniEmlakScraper
-from scrapers.emlak import EmlakAzScraper  
+from scrapers.emlak import EmlakAzScraper
+from scrapers.bina import BinaScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -96,7 +97,7 @@ def save_listings_to_db(connection, listings):
                     'floor': listing.get('floor'),
                     'total_floors': listing.get('total_floors'),
                     'property_type': listing.get('property_type', 'unknown'),
-                    'listing_type': listing.get('listing_type', 'unknown'),
+                    'listing_type': listing.get('listing_type', 'sale'), # Default to 'sale' for Bina.az
                     'price': listing.get('price', 0),
                     'currency': listing.get('currency', 'AZN'),
                     'contact_type': listing.get('contact_type'),
@@ -171,13 +172,14 @@ async def run_scrapers():
     
     # Get configuration from environment
     load_dotenv()
-    pages = int(os.getenv('SCRAPER_PAGES', 2))  
+    pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages
     
     scrapers = [
         # ("Arenda.az", OptimizedArendaScraper()),
         # ("EV10.az", EV10Scraper()),
         # ("YeniEmlak.az", YeniEmlakScraper()),
-        ("Emlak.az", EmlakAzScraper()) 
+        # ("Emlak.az", EmlakAzScraper()),
+        ("Bina.az", BinaScraper())  
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
@@ -186,8 +188,15 @@ async def run_scrapers():
         try:
             logger.info(f"Starting {name} scraper for {pages} pages")
             results = await scraper.run(pages=pages)
-            logger.info(f"{name} scraper completed: {len(results)} listings from {pages} pages")
-            all_results.extend(results)
+            if results:
+                logger.info(f"{name} scraper completed: {len(results)} listings from {pages} pages")
+                all_results.extend(results)
+            else:
+                logger.warning(f"{name} scraper completed but returned no results")
+        except aiohttp.ClientError as e:
+            logger.error(f"Network error in {name} scraper: {str(e)}", exc_info=True)
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout error in {name} scraper", exc_info=True)
         except Exception as e:
             logger.error(f"Error running {name} scraper: {str(e)}", exc_info=True)
     
