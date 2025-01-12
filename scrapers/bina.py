@@ -15,7 +15,16 @@ class BinaScraper:
     """Scraper for bina.az real estate listings"""
     
     BASE_URL = "https://bina.az"
-    LISTINGS_URL = "https://bina.az/alqi-satqi?page="
+    LISTING_TYPES = {
+        'sale': {
+            'url': "https://bina.az/alqi-satqi",
+            'type': 'sale'
+        },
+        'rent': {
+            'url': "https://bina.az/kiraye",
+            'type': 'monthly'  # Default to monthly, we'll detect daily from title
+        }
+    }
     
     def __init__(self):
         """Initialize scraper"""
@@ -137,7 +146,19 @@ class BinaScraper:
             
         return None, None
 
-    async def parse_listing_page(self, html: str) -> List[Dict]:
+    def detect_listing_type(self, title: Optional[str], base_type: str) -> str:
+        """Detect specific listing type from title"""
+        if not title:
+            return base_type
+            
+        title_lower = title.lower()
+        if base_type == 'monthly':
+            if 'günlük' in title_lower:
+                return 'daily'
+            return 'monthly'
+        return 'sale'
+
+    async def parse_listing_page(self, html: str, listing_type: str) -> List[Dict]:
         """Parse the listings page to extract basic listing info"""
         listings = []
         soup = BeautifulSoup(html, 'lxml')
@@ -162,14 +183,20 @@ class BinaScraper:
                 if price_elem:
                     price = self.extract_price(price_elem.text.strip())
                 
-                # Extract basic info
+                # Extract title for listing type detection
+                title_elem = listing.select_one('.card-title')
+                title = title_elem.text.strip() if title_elem else None
+                
+                # Basic data from listing card
                 listing_data = {
                     'listing_id': listing_id,
                     'source_url': listing_url,
                     'source_website': 'bina.az',
                     'price': price,
-                    'currency': 'AZN', 
-                    'created_at': datetime.datetime.now()
+                    'currency': 'AZN',
+                    'listing_type': self.detect_listing_type(title, listing_type),
+                    'created_at': datetime.datetime.now(),
+                    'title': title
                 }
                 
                 # Extract location
@@ -375,41 +402,59 @@ class BinaScraper:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
 
+
     async def run(self, pages: int = 1) -> List[Dict]:
-        """Run scraper for specified number of pages"""
+        """Run scraper for specified number of pages for both sale and rental listings"""
         try:
             self.logger.info("Starting Bina.az scraper")
             await self.init_session()
-            self.logger.info(f"Scraping {pages} pages from Bina.az")
             
             all_results = []
             
-            for page in range(1, pages + 1):
-                try:
-                    self.logger.info(f"Processing page {page}")
+            # Iterate through each listing type
+            for listing_category, config in self.LISTING_TYPES.items():
+                self.logger.info(f"Scraping {listing_category} listings, {pages} pages")
+                
+                for page in range(1, pages + 1):
+                    try:
+                        self.logger.info(f"Processing {listing_category} page {page}")
+                        
+                        # Get page HTML
+                        url = f"{config['url']}?page={page}"
+                        html = await self.get_page_content(url)
+                        
+                        # Parse listings
+                        listings = await self.parse_listing_page(html, config['type'])
+                        self.logger.info(f"Found {len(listings)} {listing_category} listings on page {page}")
+                        
+                        # Get details for each listing
+                        for listing in listings:
+                            try:
+                                detail_html = await self.get_page_content(listing['source_url'])
+                                detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                                
+                                # Update listing type if it was refined from title
+                                if detail_data.get('title'):
+                                    detail_data['listing_type'] = self.detect_listing_type(
+                                        detail_data['title'], 
+                                        listing['listing_type']
+                                    )
+                                
+                                all_results.append({**listing, **detail_data})
+                            except Exception as e:
+                                self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
+                                continue
+                                
+                    except Exception as e:
+                        self.logger.error(f"Error processing {listing_category} page {page}: {str(e)}")
+                        continue
                     
-                    # Get page HTML
-                    url = f"{self.LISTINGS_URL}{page}"
-                    html = await self.get_page_content(url)
-                    
-                    # Parse listings
-                    listings = await self.parse_listing_page(html)
-                    self.logger.info(f"Found {len(listings)} listings on page {page}")
-                    
-                    # Get details for each listing
-                    for listing in listings:
-                        try:
-                            detail_html = await self.get_page_content(listing['source_url'])
-                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
-                            all_results.append({**listing, **detail_data})
-                        except Exception as e:
-                            self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
-                            continue
-                            
-                except Exception as e:
-                    self.logger.error(f"Error processing page {page}: {str(e)}")
-                    continue
-                    
+                    # Add small delay between pages
+                    await asyncio.sleep(random.uniform(1, 2))
+                
+                # Add delay between listing types
+                await asyncio.sleep(random.uniform(2, 3))
+            
             self.logger.info(f"Scraping completed. Total listings: {len(all_results)}")
             return all_results
             
