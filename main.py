@@ -38,75 +38,58 @@ def setup_logging():
     
     return logging.getLogger(__name__)
 
+
+
 def get_db_connection():
-    """Create database connection with proper SSL configuration"""
+    """Create database connection with SSL configuration"""
+    cert_file = None
     try:
         load_dotenv()
+        
         logger = logging.getLogger(__name__)
         logger.info("Attempting database connection...")
-
+        
         # Read certificate content and clean up any potential whitespace issues
         cert_content = os.getenv('SSL_CERT', '').strip()
         if not cert_content:
             raise ValueError("SSL certificate not found in environment variables")
             
         # Create a temporary file for the certificate
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as cert_file:
-            cert_file.write(cert_content)
-            cert_file.flush()  # Ensure all data is written to disk
-            cert_path = cert_file.name
-
-        try:
-            # Configure SSL settings according to mysql-connector-python requirements
-            ssl_config = {
-                'ssl_ca': cert_path
-            }
-            
-            # Main database configuration
-            db_config = {
-                'host': os.getenv('DB_HOST'),
-                'user': os.getenv('DB_USER'),
-                'password': os.getenv('DB_PASSWORD'),
-                'database': os.getenv('DB_NAME'),
-                'port': int(os.getenv('PORT', '27566')),
-                'raise_on_warnings': True,
-                'ssl': ssl_config  # Pass SSL config as a dictionary
-            }
-            
-            # Attempt connection
-            connection = mysql.connector.connect(**db_config)
-            logger.info("Successfully connected to database with SSL")
-            return connection
-            
-        finally:
-            # Clean up the temporary certificate file
-            try:
-                os.unlink(cert_path)
-                logger.debug("Cleaned up temporary certificate file")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary certificate file: {e}")
+        cert_file = tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False)
+        cert_file.write(cert_content)
+        cert_file.flush()
+        os.chmod(cert_file.name, 0o600)
         
-    except mysql.connector.Error as e:
-        logger.error(f"Database connection error: {e}")
+        db_config = {
+            'host': os.getenv('DB_HOST'),
+            'user': os.getenv('DB_USER'),
+            'password': os.getenv('DB_PASSWORD'),
+            'database': os.getenv('DB_NAME'),
+            'port': int(os.getenv('PORT', '27566')),
+            'ssl_ca': cert_file.name,            # Changed from 'ssl' dict to direct parameters
+            'ssl_verify_cert': True,
+            'ssl_verify_identity': True,
+            'raise_on_warnings': True
+        }
+        
+        connection = mysql.connector.connect(**db_config)
+        logger.info("Successfully connected to database with SSL")
+        return connection
+        
+    except Error as e:
+        logger.error(f"Error connecting to database: {e}")
         raise
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         raise
-
-def ensure_connection(connection):
-    """Ensure database connection is alive and reconnect if needed"""
-    logger = logging.getLogger(__name__)
-    try:
-        connection.ping(reconnect=True, attempts=3, delay=5)
-    except mysql.connector.Error as err:
-        logger.error(f"Database connection error: {err}")
-        try:
-            connection = get_db_connection()
-        except mysql.connector.Error as err:
-            logger.error(f"Failed to reconnect to database: {err}")
-            raise
-    return connection
-
+    finally:
+        if cert_file:
+            try:
+                os.unlink(cert_file.name)
+                logger.debug("Successfully removed SSL certificate file")
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary certificate file: {e}")
+                
 def ensure_connection(connection):
     """Ensure database connection is alive and reconnect if needed"""
     try:
