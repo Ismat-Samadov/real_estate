@@ -125,12 +125,24 @@ class OptimizedArendaScraper:
         
         for listing in soup.select('li.new_elan_box'):
             try:
+                # Get listing URL and ID
                 listing_url = listing.select_one('a')['href']
                 listing_id = listing.get('id', '').replace('elan_', '')
                 
                 if not listing_id or not listing_url:
                     continue
                 
+                # Determine listing type from URL
+                listing_type = 'sale'  # default
+                url_lower = listing_url.lower()
+                if 'kiraye-gunluk' in url_lower:
+                    listing_type = 'daily'
+                elif 'kiraye-ayliq' in url_lower:
+                    listing_type = 'monthly'
+                elif 'satilir' in url_lower:
+                    listing_type = 'sale'
+                
+                # Extract price
                 price_elem = listing.select_one('.elan_price')
                 price_text = price_elem.text.strip() if price_elem else None
                 price = self.extract_price(price_text) if price_text else None
@@ -142,6 +154,7 @@ class OptimizedArendaScraper:
                     'source_website': 'arenda.az',
                     'price': price,
                     'currency': 'AZN',
+                    'listing_type': listing_type,  # Set the listing type here
                     'created_at': datetime.datetime.now()
                 }
                 
@@ -154,136 +167,125 @@ class OptimizedArendaScraper:
         return listings
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page with enhanced data extraction"""
+        """Parse the detailed listing page with enhanced data validation"""
         soup = BeautifulSoup(html, 'lxml')
         try:
-            # Initialize empty listing data
-            listing_data = {}
-            
-            # Extract main content
-            title = None
+            listing_data = {
+                'listing_id': listing_id,
+                'source_website': 'arenda.az',
+                'created_at': datetime.datetime.now(),
+                'updated_at': datetime.datetime.now()
+            }
+
+            # Extract title and description
             title_elem = soup.select_one('h2.elan_main_title')
             if title_elem and title_elem.text:
-                title = title_elem.text.strip()
+                listing_data['title'] = title_elem.text.strip()
                 
-            description = None
             desc_elem = soup.select_one('.elan_info_txt')
             if desc_elem:
-                description = desc_elem.text.strip()
                 # Remove "factDisplay" text if present
                 fact_display = desc_elem.select_one('#factDisplay')
                 if fact_display:
                     fact_display.decompose()
-                description = desc_elem.text.strip()
+                listing_data['description'] = desc_elem.text.strip()
                 
-            # Extract price information
-            price = None
-            currency = 'AZN'
+            # Extract price
             price_box = soup.select_one('.elan_new_price_box')
             if price_box:
                 price_text = price_box.text.strip()
                 price = self.extract_price(price_text)
+                if price is not None and price > 0:
+                    listing_data['price'] = price
+                    listing_data['currency'] = 'AZN'
             
-            # Extract location information
-            address = None
-            location = None
-            district = None
-            metro_station = None
-            latitude = None
-            longitude = None
-            
-            # Get coordinates if available
+            # Extract and validate coordinates
             lat_elem = soup.select_one('#lat')
             lon_elem = soup.select_one('#lon')
             if lat_elem and lon_elem:
                 try:
-                    latitude = float(lat_elem.get('value', 0))
-                    longitude = float(lon_elem.get('value', 0))
-                except (ValueError, TypeError):
-                    pass
+                    lat = float(lat_elem.get('value', 0))
+                    lon = float(lon_elem.get('value', 0))
+                    
+                    # Only include coordinates if they're in valid ranges
+                    if -90 <= lat <= 90 and -180 <= lon <= 180:
+                        listing_data['latitude'] = round(lat, 8)
+                        listing_data['longitude'] = round(lon, 8)
+                    else:
+                        self.logger.warning(f"Invalid coordinate ranges for listing {listing_id}: lat={lat}, lon={lon}")
+                except (ValueError, TypeError) as e:
+                    self.logger.error(f"Error parsing coordinates for listing {listing_id}: {str(e)}")
             
-            # Get address info
+            # Extract location information
             address_elem = soup.select_one('.elan_unvan_txt')
             if address_elem:
-                address = address_elem.text.strip()
+                listing_data['address'] = address_elem.text.strip()
             
             # Get metro/district/location
             location_elems = soup.select('.elan_adr_list li a')
             for elem in location_elems:
-                text = elem.text.strip()
-                if 'metro' in text.lower():
-                    metro_station = text.replace('metro', '').strip()
+                text = elem.text.strip().lower()
+                if 'metro' in text:
+                    listing_data['metro_station'] = text.replace('metro', '').strip()
                 elif 'r.' in text:
-                    district = text.replace('r.', '').strip()
+                    listing_data['district'] = text.replace('r.', '').strip()
                 else:
-                    location = text
+                    listing_data['location'] = text
             
             # Extract property details and amenities
-            property_details = {}
             property_lists = soup.select('.property_lists li')
             amenities = [item.text.strip() for item in property_lists] if property_lists else []
+            if amenities:
+                listing_data['amenities'] = json.dumps(amenities)
             
-            # Get room/area/floor information
+            # Extract repair status
+            listing_data['has_repair'] = 'Təmirli' in ' '.join(amenities) if amenities else False
+            
+            # Parse room/area/floor information
             for prop_item in soup.select('.elan_property_list li a'):
-                text = prop_item.text.strip()
-                if 'otaq' in text:
-                    try:
-                        property_details['rooms'] = int(text.split()[0])
-                    except (ValueError, IndexError):
-                        pass
-                elif 'm2' in text or 'm²' in text:
-                    try:
-                        property_details['area'] = float(text.replace('m2', '').replace('m²', '').strip())
-                    except ValueError:
-                        pass
-                elif 'mərtəbə' in text:
-                    try:
+                text = prop_item.text.strip().lower()
+                try:
+                    if 'otaq' in text:
+                        rooms = int(text.split()[0])
+                        if 0 < rooms <= 50:  # Reasonable range check
+                            listing_data['rooms'] = rooms
+                    elif any(x in text for x in ['m²', 'm2']):
+                        area = float(re.sub(r'[^\d.]', '', text))
+                        if 5 <= area <= 10000:  # Reasonable range check
+                            listing_data['area'] = area
+                    elif 'mərtəbə' in text:
                         floor_info = text.split('/')
                         if len(floor_info) == 2:
-                            property_details['floor'] = int(floor_info[0].strip())
-                            property_details['total_floors'] = int(floor_info[1].split()[0].strip())
-                    except (ValueError, IndexError):
-                        pass
-            
-            # Determine listing type
-            listing_type = None
-            if title:
-                if 'günlük' in title.lower():
-                    listing_type = 'daily'
-                elif 'aylıq' in title.lower():
-                    listing_type = 'monthly'
-                elif 'satılır' in title.lower():
-                    listing_type = 'sale'
+                            floor = int(floor_info[0].strip())
+                            total_floors = int(floor_info[1].split()[0].strip())
+                            if 0 <= floor <= total_floors <= 200:  # Reasonable range check
+                                listing_data['floor'] = floor
+                                listing_data['total_floors'] = total_floors
+                except (ValueError, IndexError) as e:
+                    self.logger.warning(f"Error parsing property detail '{text}': {str(e)}")
             
             # Extract contact information
-            contact_type = None
-            contact_phone = None
-            whatsapp_available = False
-            
             user_info = soup.select_one('.new_elan_user_info')
             if user_info:
                 contact_text = user_info.select_one('p')
                 if contact_text:
                     contact_type = contact_text.text.strip()
                     if '(' in contact_type and ')' in contact_type:
-                        contact_type = contact_type.split('(')[1].split(')')[0]
+                        listing_data['contact_type'] = contact_type.split('(')[1].split(')')[0]
                         
                 phone_elem = user_info.select_one('.elan_in_tel')
                 if phone_elem:
-                    contact_phone = phone_elem.text.strip()
-                    whatsapp_available = bool(phone_elem.select_one('.wp_status_ico'))
+                    listing_data['contact_phone'] = phone_elem.text.strip()
+                    listing_data['whatsapp_available'] = bool(phone_elem.select_one('.wp_status_ico'))
             
             # Extract timestamp and views
-            listing_date = None
-            views_count = 0
-            
             date_box = soup.select_one('.elan_date_box')
             if date_box:
                 date_elem = date_box.select_one('p:-soup-contains("tarixi")')
                 if date_elem:
                     try:
                         date_str = date_elem.text.split(':')[1].strip()
-                        listing_date = datetime.datetime.strptime(date_str, '%d.%m.%Y').date()
+                        listing_data['listing_date'] = datetime.datetime.strptime(date_str, '%d.%m.%Y').date()
                     except (ValueError, IndexError):
                         pass
                         
@@ -292,10 +294,12 @@ class OptimizedArendaScraper:
                     try:
                         views_text = views_elem.text.split(':')[1].strip()
                         views_count = int(views_text)
+                        if views_count >= 0:
+                            listing_data['views_count'] = views_count
                     except (ValueError, IndexError):
                         pass
             
-            # Extract photos if any
+            # Extract photos
             photos = []
             photo_containers = soup.select('.elan_img_box img')
             for photo in photo_containers:
@@ -303,43 +307,41 @@ class OptimizedArendaScraper:
                 if src and 'load.gif' not in src:
                     photos.append(src)
             
-            # Extract repair status
-            has_repair = 'Təmirli' in amenities if amenities else False
+            if photos:
+                listing_data['photos'] = json.dumps(photos)
             
-            # Combine all data
-            listing_data.update({
-                'listing_id': listing_id,
-                'title': title,
-                'description': description,
-                'address': address,
-                'location': location,
-                'district': district,
-                'metro_station': metro_station,
-                'latitude': latitude,
-                'longitude': longitude,
-                'property_type': 'apartment',
-                'price': price,
-                'currency': currency,
-                'listing_type': listing_type,
-                'contact_type': contact_type,
-                'contact_phone': contact_phone,
-                'whatsapp_available': whatsapp_available,
-                'views_count': views_count,
-                'listing_date': listing_date,
-                'has_repair': has_repair,
-                'amenities': json.dumps(amenities) if amenities else None,
-                'photos': json.dumps(photos) if photos else None,
-                'created_at': datetime.datetime.now(),
-                'updated_at': datetime.datetime.now(),
-                **property_details
-            })
-            
+            # Determine listing type from URL if not already set
+            url = listing_data.get('source_url', '').lower()
+            if 'kiraye-gunluk' in url:
+                listing_data['listing_type'] = 'daily'
+            elif 'kiraye-ayliq' in url:
+                listing_data['listing_type'] = 'monthly'
+            elif 'satilir' in url:
+                listing_data['listing_type'] = 'sale'
+            else:
+                listing_data['listing_type'] = 'sale'  # default
+                
+            # Determine property type
+            if 'heyet-evi' in url or 'villa' in url:
+                listing_data['property_type'] = 'house'
+            elif 'yeni-tikili' in url:
+                listing_data['property_type'] = 'new'
+            elif 'kohne-tikili' in url:
+                listing_data['property_type'] = 'old'
+            elif 'ofis' in url:
+                listing_data['property_type'] = 'office'
+            elif 'obyekt' in url:
+                listing_data['property_type'] = 'commercial'
+            elif 'torpaq' in url:
+                listing_data['property_type'] = 'land'
+            else:
+                listing_data['property_type'] = 'apartment'  # default
+                
             return listing_data
-            
+                
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-    
 
     def extract_price(self, price_text: str) -> float:
         """Extract numeric price from price text"""

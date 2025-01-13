@@ -176,78 +176,98 @@ def validate_numeric_field(value: any, field_name: str, min_val: float = None, m
     except Exception as e:
         logger.error(f"Error converting {field_name} value: {value} ({type(value)}): {str(e)}")
         return None
-
 def validate_listing_data(listing: Dict) -> Dict:
     """Validate and clean listing data before database insertion"""
     logger = logging.getLogger(__name__)
     validated = listing.copy()
-    
-    logger.debug(f"Validating listing {listing.get('listing_id')}")
-    
+
     # Required fields validation
     if not validated.get('listing_id'):
         logger.error("Missing required listing_id")
         return {}
-    
-    # Coordinate validation
-    if 'latitude' in validated:
-        validated['latitude'] = validate_numeric_field(
-            validated['latitude'], 'latitude', min_val=-90, max_val=90)
+
+    # Ensure listing type is valid
+    if 'listing_type' not in validated or validated['listing_type'] not in ['daily', 'monthly', 'sale']:
+        validated['listing_type'] = 'sale'
+        logger.debug(f"Setting default listing_type='sale' for listing {validated.get('listing_id')}")
+
+    # Validate and format coordinates
+    # DECIMAL(10,8) means max 10 digits total with 8 after decimal point
+    # This means we can only store values between -99.99999999 and 99.99999999
+    if 'latitude' in validated or 'longitude' in validated:
+        try:
+            lat = float(validated.get('latitude', 0))
+            lon = float(validated.get('longitude', 0))
             
-    if 'longitude' in validated:
-        validated['longitude'] = validate_numeric_field(
-            validated['longitude'], 'longitude', min_val=-180, max_val=180)
-    
-    # Area validation
-    if 'area' in validated:
-        validated['area'] = validate_numeric_field(
-            validated['area'], 'area', min_val=5, max_val=10000)
-    
-    # Rooms validation
-    if 'rooms' in validated:
-        validated['rooms'] = validate_numeric_field(
-            validated['rooms'], 'rooms', min_val=1, max_val=50)
-    
-    # Floor validation
-    if 'floor' in validated:
-        validated['floor'] = validate_numeric_field(
-            validated['floor'], 'floor', min_val=0, max_val=200)
-    
-    # Total floors validation
-    if 'total_floors' in validated:
-        validated['total_floors'] = validate_numeric_field(
-            validated['total_floors'], 'total_floors', min_val=1, max_val=200)
-    
-    # Price validation
+            # Validate coordinate ranges
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                # Format to exactly 8 decimal places to match schema
+                validated['latitude'] = round(lat, 8)
+                validated['longitude'] = round(lon, 8)
+                
+                # Additional check for decimal precision
+                if abs(validated['latitude']) >= 100 or abs(validated['longitude']) >= 100:
+                    logger.warning(f"Coordinates too large for schema precision, removing: "
+                                 f"lat={validated['latitude']}, lon={validated['longitude']}")
+                    validated.pop('latitude', None)
+                    validated.pop('longitude', None)
+            else:
+                logger.warning(f"Invalid coordinates, removing: lat={lat}, lon={lon}")
+                validated.pop('latitude', None)
+                validated.pop('longitude', None)
+        except (ValueError, TypeError):
+            validated.pop('latitude', None)
+            validated.pop('longitude', None)
+
+    # Validate numeric fields
+    # Price: DECIMAL(12,2)
     if 'price' in validated:
-        validated['price'] = validate_numeric_field(
-            validated['price'], 'price', min_val=0, max_val=100000000)
-    
-    # Views count validation
-    if 'views_count' in validated:
-        validated['views_count'] = validate_numeric_field(
-            validated['views_count'], 'views_count', min_val=0)
-    
-    # Ensure floor doesn't exceed total_floors
-    if (validated.get('floor') is not None and 
-        validated.get('total_floors') is not None and 
-        validated['floor'] > validated['total_floors']):
-        logger.warning(f"Floor {validated['floor']} exceeds total_floors {validated['total_floors']}")
-        validated['floor'] = None
-        validated['total_floors'] = None
-    
-    # Convert boolean fields
+        try:
+            price = float(validated['price'])
+            if 0 < price < 1000000000:  # Reasonable price range
+                validated['price'] = round(price, 2)
+            else:
+                validated.pop('price', None)
+        except (ValueError, TypeError):
+            validated.pop('price', None)
+
+    # Area: DECIMAL(10,2)
+    if 'area' in validated:
+        try:
+            area = float(validated['area'])
+            if 5 <= area < 100000:  # Expanded but reasonable area range
+                validated['area'] = round(area, 2)
+                # Check if result exceeds schema precision
+                if validated['area'] >= 100000:
+                    logger.warning(f"Area too large for schema precision: {validated['area']}")
+                    validated.pop('area', None)
+            else:
+                validated.pop('area', None)
+        except (ValueError, TypeError):
+            validated.pop('area', None)
+
+    # Integer fields
+    for int_field in ['rooms', 'floor', 'total_floors', 'views_count']:
+        if int_field in validated:
+            try:
+                value = int(float(validated[int_field]))
+                # Field-specific validation
+                if int_field == 'rooms' and 1 <= value <= 50:
+                    validated[int_field] = value
+                elif int_field in ['floor', 'total_floors'] and 0 <= value <= 200:
+                    validated[int_field] = value
+                elif int_field == 'views_count' and value >= 0:
+                    validated[int_field] = value
+                else:
+                    validated.pop(int_field, None)
+            except (ValueError, TypeError):
+                validated.pop(int_field, None)
+
+    # Boolean fields
     for bool_field in ['whatsapp_available', 'has_repair']:
         if bool_field in validated:
             validated[bool_field] = bool(validated[bool_field])
-    
-    # Validate listing type
-    if 'listing_type' in validated:
-        valid_types = {'daily', 'monthly', 'sale'}
-        if validated['listing_type'] not in valid_types:
-            logger.warning(f"Invalid listing_type: {validated['listing_type']}, defaulting to 'sale'")
-            validated['listing_type'] = 'sale'
-    
+
     # Validate text fields
     text_fields = [
         'title', 'description', 'address', 'location', 'district',
@@ -255,7 +275,7 @@ def validate_listing_data(listing: Dict) -> Dict:
         'source_url', 'source_website'
     ]
     for field in text_fields:
-        if field in validated and validated[field]:
+        if field in validated:
             if isinstance(validated[field], bytes):
                 try:
                     validated[field] = validated[field].decode('utf-8')
@@ -263,7 +283,7 @@ def validate_listing_data(listing: Dict) -> Dict:
                     validated[field] = None
             elif isinstance(validated[field], str):
                 validated[field] = validated[field].strip()
-                if not validated[field]:  # If empty after stripping
+                if not validated[field]:
                     validated[field] = None
             else:
                 validated[field] = None
@@ -271,23 +291,38 @@ def validate_listing_data(listing: Dict) -> Dict:
     # Validate JSON fields
     json_fields = ['amenities', 'photos']
     for field in json_fields:
-        if field in validated and validated[field]:
-            if isinstance(validated[field], (list, dict)):
-                try:
+        if field in validated:
+            try:
+                if isinstance(validated[field], (list, dict)):
                     validated[field] = json.dumps(validated[field])
-                except (TypeError, ValueError):
-                    validated[field] = None
-            elif isinstance(validated[field], str):
-                try:
+                elif isinstance(validated[field], str):
                     # Verify it's valid JSON by parsing and re-dumping
                     json_data = json.loads(validated[field])
                     validated[field] = json.dumps(json_data)
-                except json.JSONDecodeError:
+                else:
                     validated[field] = None
-            else:
+            except (TypeError, ValueError, json.JSONDecodeError):
                 validated[field] = None
 
-    logger.debug(f"Validation completed for listing {validated.get('listing_id')}")
+    # Validate dates
+    if 'listing_date' in validated and not isinstance(validated['listing_date'], datetime.date):
+        try:
+            if isinstance(validated['listing_date'], str):
+                validated['listing_date'] = datetime.datetime.strptime(
+                    validated['listing_date'], '%Y-%m-%d'
+                ).date()
+            else:
+                validated.pop('listing_date', None)
+        except (ValueError, TypeError):
+            validated.pop('listing_date', None)
+
+    # Ensure timestamps are set
+    now = datetime.datetime.now()
+    if 'created_at' not in validated:
+        validated['created_at'] = now
+    if 'updated_at' not in validated:
+        validated['updated_at'] = now
+
     return validated
 
 def save_listings_to_db(connection, listings: List[Dict]) -> None:
