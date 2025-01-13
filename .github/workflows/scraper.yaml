@@ -18,7 +18,7 @@ jobs:
       PORT: '27566'
       REQUEST_DELAY: '1'
       MAX_RETRIES: '5'
-      LOGGING_LEVEL: 'DEBUG'  # Changed to DEBUG for more info
+      LOGGING_LEVEL: 'DEBUG'  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
     steps:
       - name: Checkout code
