@@ -41,6 +41,7 @@ def setup_logging():
 
 def get_db_connection():
     """Create database connection with SSL configuration"""
+    cert_file = None
     try:
         load_dotenv()
         
@@ -50,33 +51,26 @@ def get_db_connection():
             raise ValueError("SSL certificate not found in environment variables")
             
         # Create a temporary file for the certificate
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as cert_file:
-            cert_file.write(cert_content)
-            cert_file.flush()  # Ensure all data is written to disk
-            cert_path = cert_file.name
-
-        try:
-            db_config = {
-                'host': os.getenv('DB_HOST'),
-                'user': os.getenv('DB_USER'),
-                'password': os.getenv('DB_PASSWORD'),
-                'database': os.getenv('DB_NAME'),
-                'port': int(os.getenv('PORT', '27566')),
-                'raise_on_warnings': True,
-                'ssl_ca': cert_path,
-                'ssl_verify_cert': True,
-            }
-            
-            connection = mysql.connector.connect(**db_config)
-            logging.info("Successfully connected to database with SSL")
-            return connection
-            
-        finally:
-            # Clean up the temporary file
-            try:
-                os.unlink(cert_path)
-            except Exception as e:
-                logging.warning(f"Failed to remove temporary certificate file: {e}")
+        cert_file = tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False)
+        cert_file.write(cert_content)
+        cert_file.flush()  # Ensure all data is written to disk
+        os.chmod(cert_file.name, 0o600)  # Set proper file permissions
+        
+        db_config = {
+            'host': os.getenv('DB_HOST'),
+            'user': os.getenv('DB_USER'),
+            'password': os.getenv('DB_PASSWORD'),
+            'database': os.getenv('DB_NAME'),
+            'port': int(os.getenv('PORT', '27566')),
+            'raise_on_warnings': True,
+            'ssl_ca': cert_file.name,
+            'ssl_verify_cert': True,
+            'ssl_verify_identity': True  # Added this for additional security
+        }
+        
+        connection = mysql.connector.connect(**db_config)
+        logging.info("Successfully connected to database with SSL")
+        return connection
         
     except Error as e:
         logging.error(f"Error connecting to database: {e}")
@@ -84,6 +78,14 @@ def get_db_connection():
     except Exception as e:
         logging.error(f"Unexpected error: {e}")
         raise
+    finally:
+        # Clean up the temporary file
+        if cert_file:
+            try:
+                os.unlink(cert_file.name)
+            except Exception as e:
+                logging.warning(f"Failed to remove temporary certificate file: {e}")
+                
 
 
 def ensure_connection(connection):
