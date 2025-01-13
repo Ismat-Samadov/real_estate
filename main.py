@@ -11,6 +11,8 @@ from scrapers.bina import BinaScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
+import tempfile
+
 
 def setup_logging():
     """Setup enhanced logging configuration"""
@@ -36,24 +38,53 @@ def setup_logging():
     
     return logging.getLogger(__name__)
 
+
 def get_db_connection():
-    """Create database connection"""
+    """Create database connection with SSL configuration"""
     try:
         load_dotenv()
         
-        db_config = {
-            'host': os.getenv('DB_HOST'),
-            'user': os.getenv('DB_USER'),
-            'password': os.getenv('DB_PASSWORD'),
-            'database': os.getenv('DB_NAME'),
-            'raise_on_warnings': True
-        }
+        # Read certificate content and clean up any potential whitespace issues
+        cert_content = os.getenv('SSL_CERT', '').strip()
+        if not cert_content:
+            raise ValueError("SSL certificate not found in environment variables")
+            
+        # Create a temporary file for the certificate
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as cert_file:
+            cert_file.write(cert_content)
+            cert_file.flush()  # Ensure all data is written to disk
+            cert_path = cert_file.name
+
+        try:
+            db_config = {
+                'host': os.getenv('DB_HOST'),
+                'user': os.getenv('DB_USER'),
+                'password': os.getenv('DB_PASSWORD'),
+                'database': os.getenv('DB_NAME'),
+                'port': int(os.getenv('PORT', '27566')),
+                'raise_on_warnings': True,
+                'ssl_ca': cert_path,
+                'ssl_verify_cert': True,
+            }
+            
+            connection = mysql.connector.connect(**db_config)
+            logging.info("Successfully connected to database with SSL")
+            return connection
+            
+        finally:
+            # Clean up the temporary file
+            try:
+                os.unlink(cert_path)
+            except Exception as e:
+                logging.warning(f"Failed to remove temporary certificate file: {e}")
         
-        connection = mysql.connector.connect(**db_config)
-        return connection
     except Error as e:
         logging.error(f"Error connecting to database: {e}")
         raise
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        raise
+
 
 def ensure_connection(connection):
     """Ensure database connection is alive and reconnect if needed"""
@@ -176,10 +207,10 @@ async def run_scrapers():
     
     scrapers = [
         ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper()),
-        ("YeniEmlak.az", YeniEmlakScraper()),
-        ("Emlak.az", EmlakAzScraper()),
-        ("Bina.az", BinaScraper())  
+        # ("EV10.az", EV10Scraper()),
+        # ("YeniEmlak.az", YeniEmlakScraper()),
+        # ("Emlak.az", EmlakAzScraper()),
+        # ("Bina.az", BinaScraper())  
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
