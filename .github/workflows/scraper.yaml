@@ -14,10 +14,11 @@ jobs:
       DB_USER: ${{ secrets.DB_USER }}
       DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
       DB_NAME: ${{ secrets.DB_NAME }}
-      SSL_CERT: ${{ secrets.SSL_CERT }}  # Add this line
+      SSL_CERT: ${{ secrets.SSL_CERT }}
+      PORT: '27566'
       REQUEST_DELAY: '1'
       MAX_RETRIES: '5'
-      LOGGING_LEVEL: 'INFO'
+      LOGGING_LEVEL: 'DEBUG'  # Changed to DEBUG for more info
 
     steps:
       - name: Checkout code
@@ -33,6 +34,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Verify environment
+        run: |
+          echo "Checking environment variables (sanitized)..."
+          echo "DB_HOST set: ${{ secrets.DB_HOST != '' }}"
+          echo "DB_USER set: ${{ secrets.DB_USER != '' }}"
+          echo "SSL_CERT length: ${#SSL_CERT}"
 
       - name: Run scraper
         run: python main.py

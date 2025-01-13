@@ -38,23 +38,34 @@ def setup_logging():
     
     return logging.getLogger(__name__)
 
-
 def get_db_connection():
     """Create database connection with SSL configuration"""
     cert_file = None
     try:
         load_dotenv()
         
-        # Read certificate content and clean up any potential whitespace issues
+        # Debug logging for database configuration
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Database host: {os.getenv('DB_HOST')}")
+        logger.debug(f"Database name: {os.getenv('DB_NAME')}")
+        logger.debug(f"Database port: {os.getenv('PORT', '27566')}")
+        
+        # Check SSL cert
         cert_content = os.getenv('SSL_CERT', '').strip()
         if not cert_content:
             raise ValueError("SSL certificate not found in environment variables")
-            
+        
+        logger.debug("SSL certificate content length: %d", len(cert_content))
+        
         # Create a temporary file for the certificate
         cert_file = tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False)
         cert_file.write(cert_content)
-        cert_file.flush()  # Ensure all data is written to disk
-        os.chmod(cert_file.name, 0o600)  # Set proper file permissions
+        cert_file.flush()
+        
+        # Set proper permissions and debug log the file
+        os.chmod(cert_file.name, 0o600)
+        logger.debug(f"SSL certificate path: {cert_file.name}")
+        logger.debug(f"SSL certificate permissions: {oct(os.stat(cert_file.name).st_mode)[-3:]}")
         
         db_config = {
             'host': os.getenv('DB_HOST'),
@@ -62,31 +73,33 @@ def get_db_connection():
             'password': os.getenv('DB_PASSWORD'),
             'database': os.getenv('DB_NAME'),
             'port': int(os.getenv('PORT', '27566')),
-            'raise_on_warnings': True,
-            'ssl_ca': cert_file.name,
-            'ssl_verify_cert': True,
-            'ssl_verify_identity': True  # Added this for additional security
+            'ssl': {
+                'ca': cert_file.name,
+                'verify_cert': True,
+            }
         }
         
+        # Try connection
+        logger.info("Attempting database connection...")
         connection = mysql.connector.connect(**db_config)
-        logging.info("Successfully connected to database with SSL")
+        logger.info("Successfully connected to database with SSL")
         return connection
         
     except Error as e:
-        logging.error(f"Error connecting to database: {e}")
+        logger.error(f"Error connecting to database: {e}")
+        if cert_file:
+            logger.error(f"Certificate file contents: {open(cert_file.name).read()[:100]}...")
         raise
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
+        logger.error(f"Unexpected error: {e}")
         raise
     finally:
-        # Clean up the temporary file
         if cert_file:
             try:
                 os.unlink(cert_file.name)
+                logger.debug("Successfully removed SSL certificate file")
             except Exception as e:
-                logging.warning(f"Failed to remove temporary certificate file: {e}")
-                
-
+                logger.warning(f"Failed to remove temporary certificate file: {e}")
 
 def ensure_connection(connection):
     """Ensure database connection is alive and reconnect if needed"""
