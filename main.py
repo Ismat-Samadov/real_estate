@@ -66,7 +66,7 @@ def get_db_connection():
             'password': os.getenv('DB_PASSWORD'),
             'database': os.getenv('DB_NAME'),
             'port': int(os.getenv('PORT', '27566')),
-            'ssl_ca': cert_file.name,            # Changed from 'ssl' dict to direct parameters
+            'ssl_ca': cert_file.name,           
             'ssl_verify_cert': True,
             'ssl_verify_identity': True,
             'raise_on_warnings': True
@@ -449,10 +449,10 @@ async def run_scrapers():
     
     scrapers = [
         ("Arenda.az", OptimizedArendaScraper()),
-        # ("EV10.az", EV10Scraper()),
-        # ("YeniEmlak.az", YeniEmlakScraper()),
-        # ("Emlak.az", EmlakAzScraper()),
-        # ("Bina.az", BinaScraper())  
+        ("EV10.az", EV10Scraper()),
+        ("YeniEmlak.az", YeniEmlakScraper()),
+        ("Emlak.az", EmlakAzScraper()),
+        ("Bina.az", BinaScraper())  
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
