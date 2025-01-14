@@ -10,12 +10,16 @@ A high-performance Python web scraper for collecting and analyzing real estate l
 
 | Website | Status | Features |
 |---------|--------|-----------|
-| [bina.az](https://bina.az) | ✅ Active | Full listing data, photos |
-| [yeniemlak.az](https://yeniemlak.az) | ✅ Active | Full listing data |
+| [bina.az](https://bina.az) | ✅ Active | Full listing data, photos, contact info |
+| [yeniemlak.az](https://yeniemlak.az) | ✅ Active | Full listing data, location info |
 | [emlak.az](https://emlak.az) | ✅ Active | Full listing data, contact info |
-| [lalafo.az](https://lalafo.az) | ✅ Active | API integration |
-| [tap.az](https://tap.az) | 🚧 Planned | - |
-| [ev10.az](https://ev10.az) | 🚧 In Progress | Basic listing data |
+| [lalafo.az](https://lalafo.az) | ✅ Active | API integration, full data |
+| [tap.az](https://tap.az) | ✅ Active | Full listing data, photos |
+| [ev10.az](https://ev10.az) | ✅ Active | Full listing data |
+| [arenda.az](https://arenda.az) | ✅ Active | Full listing data, location info |
+| [ipoteka.az](https://ipoteka.az) | ✅ Active | Full listing data, mortgage info |
+| [unvan.az](https://unvan.az) | ✅ Active | Full listing data |
+| [vipemlak.az](https://vipemlak.az) | ✅ Active | Full listing data |
 
 ## ✨ Key Features
 
@@ -116,26 +120,25 @@ python main.py --export csv
 
 ```
 real_estate/
-├── .github/
-│   └── workflows/          # CI/CD configurations
-│       └── scraper.yaml    # Automated scraping workflow
-├── scrapers/              # Individual site scrapers
-│   ├── __init__.py
-│   ├── arenda.py          # Arenda.az implementation
-│   ├── bina.py           # Bina.az implementation
-│   └── ...               # Other scrapers
-├── logs/                 # Application logging
-│   └── scraper.log
-├── tests/               # Test suite
-│   ├── __init__.py
-│   └── test_scrapers.py
-├── utils/               # Utility functions
-│   ├── __init__.py
-│   └── helpers.py
-├── main.py             # Application entry point
-├── requirements.txt    # Dependencies
-├── schema.sql         # Database schema
-└── README.md          # Documentation
+├── LICENSE             # MIT License
+├── README.md          # Documentation
+├── ca.pem             # SSL Certificate
+├── logs/              # Application logging
+│   └── scraper.log    # Detailed logs
+├── main.py            # Application entry point
+├── requirements.txt   # Dependencies
+├── schema.sql        # Database schema
+└── scrapers/         # Individual site scrapers
+    ├── arenda.py     # Arenda.az implementation
+    ├── bina.py       # Bina.az implementation
+    ├── emlak.py      # Emlak.az implementation
+    ├── ev10.py       # EV10.az implementation
+    ├── ipoteka.py    # Ipoteka.az implementation
+    ├── lalafo.py     # Lalafo.az implementation
+    ├── tap.py        # Tap.az implementation
+    ├── unvan.py      # Unvan.az implementation
+    ├── vipemlak.py   # VipEmlak.az implementation
+    └── yeniemlak.py  # YeniEmlak.az implementation
 ```
 
 ## 💾 Database Schema
@@ -188,20 +191,22 @@ CREATE TABLE properties (
 
 ## 🎯 Roadmap
 
-### Q1 2024
-- [ ] Add tap.az support
-- [ ] Implement proxy rotation
-- [ ] Add data validation
+### Current Status ✅
+- [x] Completed all major property website scrapers
+- [x] Implemented database schema and storage
+- [x] Set up logging and error handling
+- [x] Added GitHub Actions automation
 
-### Q2 2024
-- [ ] Create REST API
-- [ ] Add visualization
-- [ ] Implement caching
-
-### Q3 2024
-- [ ] Build admin dashboard
-- [ ] Add data analytics
-- [ ] Implement automated tests
+### Next Steps
+- [ ] Implement proxy rotation for enhanced reliability
+- [ ] Add data analytics and visualization dashboard
+- [ ] Create REST API for data access
+- [ ] Add automated testing suite
+- [ ] Implement caching layer
+- [ ] Add data export functionality
+- [ ] Create admin monitoring interface
+- [ ] Implement real-time price tracking
+- [ ] Add email notifications for price changes
 
 ## 🤝 Contributing
 
