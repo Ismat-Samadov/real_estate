@@ -220,7 +220,7 @@ This project is MIT licensed - see [LICENSE](LICENSE) for details.
 
 - **Ismat Samadov** - Project Lead
   - GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
-  - Email: [contact@example.com](mailto:contact@example.com)
+  - Email: [contact@example.com](mailto:ismetsemedov@gmail.com)
 
 ## 🛠️ Built With
 
