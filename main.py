@@ -12,6 +12,7 @@ from scrapers.ipoteka import IpotekaScraper
 from scrapers.unvan import UnvanScraper
 from scrapers.vipemlak import VipEmlakScraper
 from scrapers.lalafo import LalafoScraper
+from scrapers.tap import TapAzScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -473,7 +474,8 @@ async def run_scrapers():
         # ("Ipoteka.az", IpotekaScraper()),
         # ("Unvan.az", UnvanScraper()),
         # ("VipEmlak.az", VipEmlakScraper()),
-        ("Lalafo.az", LalafoScraper())
+        # ("Lalafo.az", LalafoScraper()),
+        ("Tap.az", TapAzScraper())
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
