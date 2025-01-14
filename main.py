@@ -8,11 +8,15 @@ from scrapers.ev10 import EV10Scraper
 from scrapers.yeniemlak import YeniEmlakScraper
 from scrapers.emlak import EmlakAzScraper
 from scrapers.bina import BinaScraper
+from scrapers.ipoteka import IpotekaScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
 import tempfile
 from typing import Dict, List, Optional, Tuple
+from decimal import Decimal, ROUND_HALF_UP
+import json
+import re
 
 def setup_logging():
     """Setup enhanced logging configuration"""
@@ -89,6 +93,8 @@ def get_db_connection():
                 logger.debug("Successfully removed SSL certificate file")
             except Exception as e:
                 logger.warning(f"Failed to remove temporary certificate file: {e}")
+    
+    
                 
 def ensure_connection(connection):
     """Ensure database connection is alive and reconnect if needed"""
@@ -114,12 +120,6 @@ def debug_listing_data(listing: Dict, listing_id: str) -> None:
         if field in listing:
             logger.debug(f"{field}: {type(listing[field])} = {listing[field]}")
 
-
-from decimal import Decimal, ROUND_HALF_UP
-import json
-import logging
-from typing import Dict, Optional
-import re
 
 def validate_numeric_field(value: any, field_name: str, min_val: float = None, max_val: float = None) -> Optional[float]:
     """Validate and convert numeric fields with enhanced precision handling"""
@@ -180,6 +180,39 @@ def validate_numeric_field(value: any, field_name: str, min_val: float = None, m
     except Exception as e:
         logger.error(f"Error converting {field_name} value: {value} ({type(value)}): {str(e)}")
         return None
+
+def validate_coordinates(lat: Optional[float], lon: Optional[float]) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Validate coordinates and format them as strings matching DECIMAL(10,8).
+    Returns tuple of (latitude, longitude) as strings or (None, None) if invalid.
+    """
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if lat is not None and lon is not None:
+            lat_float = float(lat)
+            lon_float = float(lon)
+            
+            # Check valid ranges
+            if -90 <= lat_float <= 90 and -180 <= lon_float <= 180:
+                # Format to exactly 8 decimal places as strings
+                lat_str = "{:.8f}".format(lat_float)
+                lon_str = "{:.8f}".format(lon_float)
+                
+                # Log values for debugging
+                logger.debug(f"Formatted coordinates: lat={lat_str}, lon={lon_str}")
+                
+                return lat_str, lon_str
+            else:
+                logger.warning(f"Coordinates out of range: lat={lat_float}, lon={lon_float}")
+        
+        return None, None
+        
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error validating coordinates: {str(e)}")
+        return None, None
+
+
 def validate_listing_data(listing: Dict) -> Dict:
     """Validate and clean listing data before database insertion"""
     logger = logging.getLogger(__name__)
@@ -190,72 +223,67 @@ def validate_listing_data(listing: Dict) -> Dict:
         logger.error("Missing required listing_id")
         return {}
 
-    # Ensure listing type is valid
-    if 'listing_type' not in validated or validated['listing_type'] not in ['daily', 'monthly', 'sale']:
-        validated['listing_type'] = 'sale'
-        logger.debug(f"Setting default listing_type='sale' for listing {validated.get('listing_id')}")
+    # Text field length validation based on schema
+    text_field_limits = {
+        'title': 200,
+        'metro_station': 100,
+        'district': 100,
+        'address': None,  # TEXT type
+        'location': 200,
+        'property_type': 50,
+        'contact_type': 50,
+        'contact_phone': 50,
+        'source_url': None,  # TEXT type
+        'source_website': 100,
+        'currency': 10
+    }
 
-    # Validate and format coordinates
-    # DECIMAL(10,8) means max 10 digits total with 8 after decimal point
-    # This means we can only store values between -99.99999999 and 99.99999999
-    if 'latitude' in validated or 'longitude' in validated:
-        try:
-            lat = float(validated.get('latitude', 0))
-            lon = float(validated.get('longitude', 0))
-            
-            # Validate coordinate ranges
-            if -90 <= lat <= 90 and -180 <= lon <= 180:
-                # Format to exactly 8 decimal places to match schema
-                validated['latitude'] = round(lat, 8)
-                validated['longitude'] = round(lon, 8)
-                
-                # Additional check for decimal precision
-                if abs(validated['latitude']) >= 100 or abs(validated['longitude']) >= 100:
-                    logger.warning(f"Coordinates too large for schema precision, removing: "
-                                 f"lat={validated['latitude']}, lon={validated['longitude']}")
-                    validated.pop('latitude', None)
-                    validated.pop('longitude', None)
+    # Truncate text fields to match database column lengths
+    for field, max_length in text_field_limits.items():
+        if field in validated and validated[field]:
+            if isinstance(validated[field], bytes):
+                try:
+                    validated[field] = validated[field].decode('utf-8')
+                except UnicodeDecodeError:
+                    validated[field] = None
+                    continue
+                    
+            if isinstance(validated[field], str):
+                validated[field] = validated[field].strip()
+                if max_length and len(validated[field]) > max_length:
+                    logger.debug(f"Truncating {field} from {len(validated[field])} to {max_length} characters")
+                    validated[field] = validated[field][:max_length]
+                if not validated[field]:
+                    validated[field] = None
             else:
-                logger.warning(f"Invalid coordinates, removing: lat={lat}, lon={lon}")
-                validated.pop('latitude', None)
-                validated.pop('longitude', None)
-        except (ValueError, TypeError):
-            validated.pop('latitude', None)
-            validated.pop('longitude', None)
+                validated[field] = None
 
     # Validate numeric fields
-    # Price: DECIMAL(12,2)
-    if 'price' in validated:
-        try:
+    try:
+        if 'price' in validated:
             price = float(validated['price'])
             if 0 < price < 1000000000:  # Reasonable price range
                 validated['price'] = round(price, 2)
             else:
                 validated.pop('price', None)
-        except (ValueError, TypeError):
-            validated.pop('price', None)
+    except (ValueError, TypeError):
+        validated.pop('price', None)
 
-    # Area: DECIMAL(10,2)
-    if 'area' in validated:
-        try:
+    try:
+        if 'area' in validated:
             area = float(validated['area'])
-            if 5 <= area < 100000:  # Expanded but reasonable area range
+            if 5 <= area <= 10000:  # Reasonable area range
                 validated['area'] = round(area, 2)
-                # Check if result exceeds schema precision
-                if validated['area'] >= 100000:
-                    logger.warning(f"Area too large for schema precision: {validated['area']}")
-                    validated.pop('area', None)
             else:
                 validated.pop('area', None)
-        except (ValueError, TypeError):
-            validated.pop('area', None)
+    except (ValueError, TypeError):
+        validated.pop('area', None)
 
-    # Integer fields
+    # Validate integer fields
     for int_field in ['rooms', 'floor', 'total_floors', 'views_count']:
         if int_field in validated:
             try:
                 value = int(float(validated[int_field]))
-                # Field-specific validation
                 if int_field == 'rooms' and 1 <= value <= 50:
                     validated[int_field] = value
                 elif int_field in ['floor', 'total_floors'] and 0 <= value <= 200:
@@ -267,58 +295,44 @@ def validate_listing_data(listing: Dict) -> Dict:
             except (ValueError, TypeError):
                 validated.pop(int_field, None)
 
-    # Boolean fields
+    # Validate coordinates
+    if 'latitude' in validated or 'longitude' in validated:
+        try:
+            lat = float(validated.get('latitude', 0))
+            lon = float(validated.get('longitude', 0))
+            
+            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                validated['latitude'] = round(lat, 8)
+                validated['longitude'] = round(lon, 8)
+            else:
+                validated.pop('latitude', None)
+                validated.pop('longitude', None)
+        except (ValueError, TypeError):
+            validated.pop('latitude', None)
+            validated.pop('longitude', None)
+
+    # Validate boolean fields
     for bool_field in ['whatsapp_available', 'has_repair']:
         if bool_field in validated:
             validated[bool_field] = bool(validated[bool_field])
 
-    # Validate text fields
-    text_fields = [
-        'title', 'description', 'address', 'location', 'district',
-        'metro_station', 'contact_type', 'contact_phone', 'property_type',
-        'source_url', 'source_website'
-    ]
-    for field in text_fields:
-        if field in validated:
-            if isinstance(validated[field], bytes):
-                try:
-                    validated[field] = validated[field].decode('utf-8')
-                except UnicodeDecodeError:
-                    validated[field] = None
-            elif isinstance(validated[field], str):
-                validated[field] = validated[field].strip()
-                if not validated[field]:
-                    validated[field] = None
-            else:
-                validated[field] = None
+    # Validate listing type
+    if 'listing_type' not in validated or validated['listing_type'] not in ['daily', 'monthly', 'sale']:
+        validated['listing_type'] = 'sale'  # default value
 
     # Validate JSON fields
-    json_fields = ['amenities', 'photos']
-    for field in json_fields:
-        if field in validated:
+    for json_field in ['amenities', 'photos']:
+        if json_field in validated:
             try:
-                if isinstance(validated[field], (list, dict)):
-                    validated[field] = json.dumps(validated[field])
-                elif isinstance(validated[field], str):
-                    # Verify it's valid JSON by parsing and re-dumping
-                    json_data = json.loads(validated[field])
-                    validated[field] = json.dumps(json_data)
+                if isinstance(validated[json_field], (list, dict)):
+                    validated[json_field] = json.dumps(validated[json_field])
+                elif isinstance(validated[json_field], str):
+                    # Verify it's valid JSON
+                    json.loads(validated[json_field])
                 else:
-                    validated[field] = None
-            except (TypeError, ValueError, json.JSONDecodeError):
-                validated[field] = None
-
-    # Validate dates
-    if 'listing_date' in validated and not isinstance(validated['listing_date'], datetime.date):
-        try:
-            if isinstance(validated['listing_date'], str):
-                validated['listing_date'] = datetime.datetime.strptime(
-                    validated['listing_date'], '%Y-%m-%d'
-                ).date()
-            else:
-                validated.pop('listing_date', None)
-        except (ValueError, TypeError):
-            validated.pop('listing_date', None)
+                    validated[json_field] = None
+            except (ValueError, TypeError, json.JSONDecodeError):
+                validated[json_field] = None
 
     # Ensure timestamps are set
     now = datetime.datetime.now()
@@ -448,11 +462,12 @@ async def run_scrapers():
     pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages
     
     scrapers = [
-        ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper()),
-        ("YeniEmlak.az", YeniEmlakScraper()),
-        ("Emlak.az", EmlakAzScraper()),
-        ("Bina.az", BinaScraper())  
+        # ("Arenda.az", OptimizedArendaScraper()),
+        # ("EV10.az", EV10Scraper()),
+        # ("YeniEmlak.az", YeniEmlakScraper()),
+        # ("Emlak.az", EmlakAzScraper()),
+        # ("Bina.az", BinaScraper()),
+        ("Ipoteka.az", IpotekaScraper())
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
