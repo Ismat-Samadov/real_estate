@@ -9,6 +9,7 @@ from scrapers.yeniemlak import YeniEmlakScraper
 from scrapers.emlak import EmlakAzScraper
 from scrapers.bina import BinaScraper
 from scrapers.ipoteka import IpotekaScraper
+from scrapers.unvan import UnvanScraper
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -462,12 +463,13 @@ async def run_scrapers():
     pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages
     
     scrapers = [
-        ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper()),
-        ("YeniEmlak.az", YeniEmlakScraper()),
-        ("Emlak.az", EmlakAzScraper()),
-        ("Bina.az", BinaScraper()),
-        ("Ipoteka.az", IpotekaScraper())
+        # ("Arenda.az", OptimizedArendaScraper()),
+        # ("EV10.az", EV10Scraper()),
+        # ("YeniEmlak.az", YeniEmlakScraper()),
+        # ("Emlak.az", EmlakAzScraper()),
+        # ("Bina.az", BinaScraper()),
+        # ("Ipoteka.az", IpotekaScraper()),
+        ("Unvan.az", UnvanScraper())
     ]
     
     logger.info(f"Starting scrapers with {pages} pages each")
