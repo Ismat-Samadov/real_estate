@@ -466,15 +466,15 @@ async def run_scrapers():
     pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages
     
     scrapers = [
-        # ("Arenda.az", OptimizedArendaScraper()),
-        # ("EV10.az", EV10Scraper()),
-        # ("YeniEmlak.az", YeniEmlakScraper()),
-        # ("Emlak.az", EmlakAzScraper()),
-        # ("Bina.az", BinaScraper()),
-        # ("Ipoteka.az", IpotekaScraper()),
-        # ("Unvan.az", UnvanScraper()),
-        # ("VipEmlak.az", VipEmlakScraper()),
-        # ("Lalafo.az", LalafoScraper()),
+        ("Arenda.az", OptimizedArendaScraper()),
+        ("EV10.az", EV10Scraper()),
+        ("YeniEmlak.az", YeniEmlakScraper()),
+        ("Emlak.az", EmlakAzScraper()),
+        ("Bina.az", BinaScraper()),
+        ("Ipoteka.az", IpotekaScraper()),
+        ("Unvan.az", UnvanScraper()),
+        ("VipEmlak.az", VipEmlakScraper()),
+        ("Lalafo.az", LalafoScraper()),
         ("Tap.az", TapAzScraper())
     ]
     
