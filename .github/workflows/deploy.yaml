@@ -36,23 +36,31 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Install Python 3.10 on remote server
+      - name: Configure sudo access and install Python
         run: |
-          # Create a script to run the installation
-          cat > install_python.sh << 'EOL'
-          #!/bin/bash
-          set -e
-          export DEBIAN_FRONTEND=noninteractive
-          apt-get update
-          apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
-          python3.10 --version
-          EOL
+          # First, try to check if Python 3.10 is already installed
+          PYTHON_CHECK=$(ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'command -v python3.10 || echo "not found"')
           
-          # Copy the script to the remote server
-          scp -i ~/.ssh/deploy_key install_python.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/tmp/
+          if [ "$PYTHON_CHECK" = "not found" ]; then
+            # Python needs to be installed. First, let's try installing using apt
+            ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+              # Add deadsnakes PPA for Python 3.10
+              if ! grep -q "deadsnakes" /etc/apt/sources.list.d/*; then
+                sudo add-apt-repository -y ppa:deadsnakes/ppa
+              fi
+              
+              # Update package lists
+              sudo apt-get update
+              
+              # Install Python 3.10 and dependencies
+              sudo DEBIAN_FRONTEND=noninteractive apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
+            '
+          fi
           
-          # Execute the script with sudo
-          ssh -i ~/.ssh/deploy_key -t ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'chmod +x /tmp/install_python.sh && sudo DEBIAN_FRONTEND=noninteractive /tmp/install_python.sh && rm /tmp/install_python.sh'
+          # Verify Python installation
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            python3.10 --version
+          '
 
       - name: Create deployment directory
         run: |
@@ -83,15 +91,33 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             set -e
             cd /var/www/scraper/new
+            
+            # Ensure python3.10 and pip are available
+            if ! command -v python3.10 &> /dev/null; then
+                echo "Python 3.10 not found"
+                exit 1
+            fi
+            
+            # Clean up any existing virtual environment
             rm -rf .venv
             
-            # Create virtual environment with Python 3.10
+            # Create new virtual environment
             python3.10 -m venv .venv
+            
+            # Activate and upgrade pip
             source .venv/bin/activate
             
-            # Update pip and install dependencies
-            python -m pip install --upgrade pip wheel setuptools
-            python -m pip install -r requirements.txt
+            # Upgrade pip and install dependencies
+            pip install --upgrade pip wheel setuptools
+            pip install -r requirements.txt || {
+                echo "Failed to install requirements"
+                cat requirements.txt
+                exit 1
+            }
+            
+            # Verify installation
+            python --version
+            pip list
           '
 
       - name: Configure environment variables
