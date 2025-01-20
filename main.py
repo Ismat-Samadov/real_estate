@@ -13,6 +13,7 @@ from scrapers.unvan import UnvanScraper
 from scrapers.vipemlak import VipEmlakScraper
 from scrapers.lalafo import LalafoScraper
 from scrapers.tap import TapAzScraper
+from bright_data_proxy import BrightDataProxy
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -21,6 +22,7 @@ from typing import Dict, List, Optional, Tuple
 from decimal import Decimal, ROUND_HALF_UP
 import json
 import re
+import random
 
 def setup_logging():
     """Setup enhanced logging configuration"""
@@ -45,43 +47,36 @@ def setup_logging():
     )
     
     return logging.getLogger(__name__)
-
-
-
 def get_db_connection():
-    """Create database connection with SSL configuration"""
-    cert_file = None
+    """Create database connection with proper character set and collation"""
     try:
         load_dotenv()
         
         logger = logging.getLogger(__name__)
         logger.info("Attempting database connection...")
         
-        # Read certificate content and clean up any potential whitespace issues
-        cert_content = os.getenv('SSL_CERT', '').strip()
-        if not cert_content:
-            raise ValueError("SSL certificate not found in environment variables")
-            
-        # Create a temporary file for the certificate
-        cert_file = tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False)
-        cert_file.write(cert_content)
-        cert_file.flush()
-        os.chmod(cert_file.name, 0o600)
-        
         db_config = {
             'host': os.getenv('DB_HOST'),
             'user': os.getenv('DB_USER'),
             'password': os.getenv('DB_PASSWORD'),
             'database': os.getenv('DB_NAME'),
-            'port': int(os.getenv('PORT', '27566')),
-            'ssl_ca': cert_file.name,           
-            'ssl_verify_cert': True,
-            'ssl_verify_identity': True,
+            'port': int(os.getenv('DB_PORT', '3306')),
+            'charset': 'utf8mb4',
+            'collation': 'utf8mb4_unicode_ci',  # Using a more widely supported collation
+            'use_unicode': True,
             'raise_on_warnings': True
         }
         
         connection = mysql.connector.connect(**db_config)
-        logger.info("Successfully connected to database with SSL")
+        
+        # Set session variables for character set and collation
+        cursor = connection.cursor()
+        cursor.execute('SET NAMES utf8mb4')
+        cursor.execute('SET CHARACTER SET utf8mb4')
+        cursor.execute('SET character_set_connection=utf8mb4')
+        cursor.close()
+        
+        logger.info("Successfully connected to database")
         return connection
         
     except Error as e:
@@ -90,16 +85,7 @@ def get_db_connection():
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         raise
-    finally:
-        if cert_file:
-            try:
-                os.unlink(cert_file.name)
-                logger.debug("Successfully removed SSL certificate file")
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary certificate file: {e}")
-    
-    
-                
+                   
 def ensure_connection(connection):
     """Ensure database connection is alive and reconnect if needed"""
     try:
@@ -356,7 +342,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
     try:
         # Ensure connection is alive
         connection = ensure_connection(connection)
-        cursor = connection.cursor(prepared=True)  # Use prepared statements
+        cursor = connection.cursor(prepared=True)
         
         insert_query = """
             INSERT INTO properties (
@@ -370,7 +356,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-            ) AS new_listing
+            )
             ON DUPLICATE KEY UPDATE
                 updated_at = VALUES(updated_at),
                 price = VALUES(price),
@@ -457,47 +443,66 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
         raise
     
 async def run_scrapers():
-    """Run all scrapers and aggregate results"""
+    """Run all scrapers with enhanced proxy support"""
     logger = logging.getLogger(__name__)
     all_results = []
     
-    # Get configuration from environment
+    # Load configuration
     load_dotenv()
-    pages = int(os.getenv('SCRAPER_PAGES', 2))  # Default to 2 pages
+    pages = int(os.getenv('SCRAPER_PAGES', 2))
     
-    scrapers = [
-        ("Arenda.az", OptimizedArendaScraper()),
-        ("EV10.az", EV10Scraper()),
-        ("YeniEmlak.az", YeniEmlakScraper()),
-        ("Emlak.az", EmlakAzScraper()),
-        ("Bina.az", BinaScraper()),
-        ("Ipoteka.az", IpotekaScraper()),
-        ("Unvan.az", UnvanScraper()),
-        ("VipEmlak.az", VipEmlakScraper()),
-        ("Lalafo.az", LalafoScraper()),
-        ("Tap.az", TapAzScraper())
-    ]
-    
-    logger.info(f"Starting scrapers with {pages} pages each")
-    
-    for name, scraper in scrapers:
-        try:
-            logger.info(f"Starting {name} scraper for {pages} pages")
-            results = await scraper.run(pages=pages)
-            if results:
-                logger.info(f"{name} scraper completed: {len(results)} listings from {pages} pages")
-                all_results.extend(results)
-            else:
-                logger.warning(f"{name} scraper completed but returned no results")
-        except aiohttp.ClientError as e:
-            logger.error(f"Network error in {name} scraper: {str(e)}", exc_info=True)
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout error in {name} scraper", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error running {name} scraper: {str(e)}", exc_info=True)
-    
-    return all_results
-
+    try:
+        # Initialize and verify proxy manager
+        proxy_manager = BrightDataProxy()
+        
+        if not await proxy_manager.verify_proxy():
+            logger.error("Failed to verify Bright Data proxy connection")
+            return []
+            
+        logger.info("Proxy verification successful, starting scrapers")
+        
+        scrapers = [
+            ("Arenda.az", OptimizedArendaScraper()),
+            ("EV10.az", EV10Scraper()),
+            ("YeniEmlak.az", YeniEmlakScraper()),
+            ("Emlak.az", EmlakAzScraper()),
+            ("Bina.az", BinaScraper()),
+            ("Ipoteka.az", IpotekaScraper()),
+            ("Unvan.az", UnvanScraper()),
+            ("VipEmlak.az", VipEmlakScraper()),
+            ("Lalafo.az", LalafoScraper()),
+            ("Tap.az", TapAzScraper())
+        ]
+        
+        for name, scraper in scrapers:
+            try:
+                logger.info(f"Starting {name} scraper")
+                
+                # Apply proxy configuration
+                proxy_manager.apply_to_scraper(scraper)
+                
+                # Run the scraper
+                results = await scraper.run(pages=pages)
+                
+                if results:
+                    logger.info(f"{name} scraper completed: {len(results)} listings")
+                    all_results.extend(results)
+                else:
+                    logger.warning(f"{name} scraper returned no results")
+                    
+            except Exception as e:
+                logger.error(f"Error running {name} scraper: {str(e)}", exc_info=True)
+                continue
+            
+            # Add delay between scrapers
+            await asyncio.sleep(random.uniform(2, 5))
+        
+        return all_results
+        
+    except Exception as e:
+        logger.error(f"Fatal error in run_scrapers: {str(e)}", exc_info=True)
+        return []
+  
 async def main():
     """Main async function to run scrapers"""
     logger = setup_logging()
