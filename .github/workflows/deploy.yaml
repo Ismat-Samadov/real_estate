@@ -93,10 +93,14 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new &&
-            python3 -m venv .venv &&
+            # Remove old venv if exists
+            rm -rf .venv &&
+            # Create new venv with Python 3.10
+            python3.10 -m venv .venv &&
             source .venv/bin/activate &&
-            pip install --upgrade pip &&
-            pip install -r requirements.txt
+            # Upgrade pip and install packages
+            python3.10 -m pip install --upgrade pip wheel &&
+            python3.10 -m pip install -r requirements.txt
           '
 
       - name: Configure environment variables
@@ -147,8 +151,8 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/current &&
             source .venv/bin/activate &&
-            if ! python3 -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"; then
-              echo "Error: Failed to verify deployment"
-              exit 1
-            fi
+            echo "Python version:" &&
+            python3 --version &&
+            echo "Testing environment:" &&
+            python3 -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"
           '
