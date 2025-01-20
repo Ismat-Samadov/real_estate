@@ -38,17 +38,21 @@ jobs:
 
       - name: Install Python 3.10 on remote server
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            set -e
-            # Update package lists
-            sudo apt-get update
-            
-            # Install Python 3.10 and development packages
-            sudo apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
-            
-            # Verify installation
-            python3.10 --version
-          '
+          # Create a script to run the installation
+          cat > install_python.sh << 'EOL'
+          #!/bin/bash
+          set -e
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
+          python3.10 --version
+          EOL
+          
+          # Copy the script to the remote server
+          scp -i ~/.ssh/deploy_key install_python.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/tmp/
+          
+          # Execute the script with sudo
+          ssh -i ~/.ssh/deploy_key -t ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'chmod +x /tmp/install_python.sh && sudo DEBIAN_FRONTEND=noninteractive /tmp/install_python.sh && rm /tmp/install_python.sh'
 
       - name: Create deployment directory
         run: |
