@@ -16,7 +16,7 @@ CREATE TABLE properties (
     
     -- Property specifications
     rooms SMALLINT,                        -- Number of rooms
-    area DECIMAL(10, 2),                   -- Total area in square meters
+    area VARCHAR(200),                   -- Total area in square meters
     floor INT,                             -- Current floor of the property
     total_floors INT,                      -- Total number of floors in building
     
