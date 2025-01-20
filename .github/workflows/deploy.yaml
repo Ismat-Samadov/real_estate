@@ -36,40 +36,14 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Configure system and install Python
+      - name: Clean and prepare directory
         run: |
-          # Create system preparation script
-          cat > /tmp/prepare_system.sh << 'EOL'
-          #!/bin/bash
-          set -e
-          
-          # Install required packages
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common
-          
-          # Add Python repository
-          add-apt-repository -y ppa:deadsnakes/ppa
-          
-          # Install Python 3.10
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
-          
-          # Create required directories
-          mkdir -p /var/www/scraper
-          chown -R ${{ secrets.SERVER_USER }}:${{ secrets.SERVER_USER }} /var/www/scraper
-          EOL
-          
-          # Copy and execute the preparation script
-          scp -i ~/.ssh/deploy_key /tmp/prepare_system.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/tmp/
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "sudo bash /tmp/prepare_system.sh"
-          
-          # Clean up
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "rm -f /tmp/prepare_system.sh"
-          
-          # Verify Python installation
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "python3.10 --version"
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            rm -rf /var/www/scraper/* 
+            mkdir -p /var/www/scraper
+          '
 
-      - name: Deploy application files
+      - name: Deploy files
         run: |
           tar czf deploy.tar.gz \
             --exclude='.git' \
@@ -79,28 +53,18 @@ jobs:
             LICENSE README.md main.py bright_data_proxy.py requirements.txt schema.sql monitoring.sql \
             scrapers/
 
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'mkdir -p /var/www/scraper/new'
-          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/new/
+          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper/new && 
+            cd /var/www/scraper && 
             tar xzf deploy.tar.gz &&
-            rm deploy.tar.gz
-          '
-
-      - name: Setup Python environment
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper/new
-            python3.10 -m venv .venv
-            source .venv/bin/activate
-            pip install --upgrade pip wheel setuptools
-            pip install -r requirements.txt
+            rm deploy.tar.gz &&
+            mkdir -p logs
           '
 
       - name: Configure environment variables
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
-            cat > /var/www/scraper/new/.env << 'EOL'
+            cat > /var/www/scraper/.env << 'EOL'
             DB_NAME='${DB_NAME}'
             DB_HOST='${DB_HOST}'
             DB_USER='${DB_USER}'
@@ -114,15 +78,5 @@ jobs:
             BRIGHT_DATA_PASSWORD='${BRIGHT_DATA_PASSWORD}'
             EOL
 
-            chmod 600 /var/www/scraper/new/.env
+            chmod 600 /var/www/scraper/.env
           "
-
-      - name: Rotate deployment
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            if [ -d "/var/www/scraper/current" ]; then
-              mv /var/www/scraper/current /var/www/scraper/old
-            fi
-            mv /var/www/scraper/new /var/www/scraper/current
-            rm -rf /var/www/scraper/old
-          '
