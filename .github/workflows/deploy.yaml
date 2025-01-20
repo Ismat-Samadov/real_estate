@@ -126,20 +126,3 @@ jobs:
             mv /var/www/scraper/new /var/www/scraper/current
             rm -rf /var/www/scraper/old
           '
-          
-      - name: Set permissions
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            chmod -R 755 /var/www/scraper/current
-            mkdir -p /var/www/scraper/current/logs
-            chmod 777 /var/www/scraper/current/logs
-          '
-
-      - name: Verify deployment
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper/current &&
-            source .venv/bin/activate &&
-            python --version &&
-            python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(\"Environment test successful\")"
-          '
