@@ -25,6 +25,7 @@ import re
 import random
 
 
+
 def setup_logging():
     """Setup enhanced logging configuration"""
     log_dir = Path('logs')
