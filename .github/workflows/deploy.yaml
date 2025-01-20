@@ -90,18 +90,23 @@ jobs:
             # Remove old venv if exists
             rm -rf .venv
             
-            # Get full path to Python 3.10
-            export PATH="/usr/local/bin:$PATH"
-            PYTHON_PATH=$(which python3.10)
+            # Source profile to get full environment
+            source ~/.bash_profile
+            source ~/.bashrc
             
-            if [ -z "$PYTHON_PATH" ]; then
+            # Find Python 3.10
+            if [ -f "/usr/local/bin/python3.10" ]; then
+              PYTHON_PATH="/usr/local/bin/python3.10"
+            elif command -v python3.10 &> /dev/null; then
+              PYTHON_PATH=$(command -v python3.10)
+            else
               echo "Error: Python 3.10 not found"
               exit 1
             fi
             
             echo "Using Python at: $PYTHON_PATH"
             
-            # Create new venv with Python 3.10
+            # Create new venv
             $PYTHON_PATH -m venv .venv &&
             source .venv/bin/activate &&
             
