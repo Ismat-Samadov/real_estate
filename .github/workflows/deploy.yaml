@@ -93,15 +93,37 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new &&
+            
+            # Find Python 3.10 executable
+            PYTHON_PATH=$(which python3.10 || which /usr/local/bin/python3.10 || which /usr/bin/python3.10)
+            
+            if [ -z "$PYTHON_PATH" ]; then
+              echo "Python 3.10 not found in standard locations. Checking all possible locations..."
+              PYTHON_PATH=$(find / -name "python3.10" -type f 2>/dev/null | head -n 1)
+            fi
+            
+            if [ -z "$PYTHON_PATH" ]; then
+              echo "Error: Python 3.10 not found"
+              exit 1
+            fi
+            
+            echo "Using Python at: $PYTHON_PATH"
+            
             # Remove old venv if exists
-            rm -rf .venv &&
-            # Create new venv with Python 3.10
-            python3.10 -m venv .venv &&
+            rm -rf .venv
+            
+            # Create new venv with found Python
+            $PYTHON_PATH -m venv .venv &&
             source .venv/bin/activate &&
-            # Upgrade pip and install packages
-            python3.10 -m pip install --upgrade pip wheel &&
-            python3.10 -m pip install -r requirements.txt
+            
+            # Verify Python version
+            python --version &&
+            
+            # Install packages
+            python -m pip install --upgrade pip wheel &&
+            python -m pip install -r requirements.txt
           '
+
 
       - name: Configure environment variables
         if: success()
