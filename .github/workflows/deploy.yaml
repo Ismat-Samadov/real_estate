@@ -80,44 +80,17 @@ jobs:
             tar xzf deploy.tar.gz &&
             rm deploy.tar.gz
           '
-
       - name: Setup Python environment
         if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'bash -l -c "
             cd /var/www/scraper/new &&
-            
-            # Remove old venv if exists
-            rm -rf .venv
-            
-            # Source profile to get full environment
-            source ~/.bash_profile
-            source ~/.bashrc
-            
-            # Find Python 3.10
-            if [ -f "/usr/local/bin/python3.10" ]; then
-              PYTHON_PATH="/usr/local/bin/python3.10"
-            elif command -v python3.10 &> /dev/null; then
-              PYTHON_PATH=$(command -v python3.10)
-            else
-              echo "Error: Python 3.10 not found"
-              exit 1
-            fi
-            
-            echo "Using Python at: $PYTHON_PATH"
-            
-            # Create new venv
-            $PYTHON_PATH -m venv .venv &&
+            rm -rf .venv &&
+            /usr/local/bin/python3.10 -m venv .venv &&
             source .venv/bin/activate &&
-            
-            # Verify Python version
-            python --version &&
-            
-            # Install packages
             python -m pip install --upgrade pip wheel &&
             python -m pip install -r requirements.txt
-          '
-
+          "'
       - name: Configure environment variables
         if: success()
         run: |
