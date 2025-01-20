@@ -83,14 +83,32 @@ jobs:
       - name: Setup Python environment
         if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'bash -l -c "
-            cd /var/www/scraper/new &&
-            rm -rf .venv &&
-            /usr/local/bin/python3.10 -m venv .venv &&
-            source .venv/bin/activate &&
-            python -m pip install --upgrade pip wheel &&
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            set -e
+            source ~/.bashrc
+            source ~/.profile 2>/dev/null || true
+            cd /var/www/scraper/new
+            rm -rf .venv
+            
+            # Use a multi-step process to ensure Python is found
+            PYTHON_CMD=""
+            if [ -x "/usr/local/bin/python3.10" ]; then
+              PYTHON_CMD="/usr/local/bin/python3.10"
+            elif [ -x "/usr/bin/python3.10" ]; then
+              PYTHON_CMD="/usr/bin/python3.10"
+            elif command -v python3.10 >/dev/null 2>&1; then
+              PYTHON_CMD=$(command -v python3.10)
+            else
+              echo "Error: Python 3.10 not found"
+              exit 1
+            fi
+            
+            echo "Using Python at: ${PYTHON_CMD}"
+            ${PYTHON_CMD} -m venv .venv
+            source .venv/bin/activate
+            python -m pip install --upgrade pip wheel
             python -m pip install -r requirements.txt
-          "'
+          '
       - name: Configure environment variables
         if: success()
         run: |
