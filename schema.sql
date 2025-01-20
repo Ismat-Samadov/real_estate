@@ -11,8 +11,8 @@ CREATE TABLE properties (
     location VARCHAR(200),                 -- General location description
     
     -- Geographic coordinates for mapping
-    latitude DECIMAL(10, 8),               -- Latitude with 8 decimal precision
-    longitude DECIMAL(10, 8),              -- Longitude with 8 decimal precision
+    latitude VARCHAR(100),              -- Latitude with 8 decimal precision
+    longitude VARCHAR(100),             -- Longitude with 8 decimal precision
     
     -- Property specifications
     rooms SMALLINT,                        -- Number of rooms
