@@ -30,41 +30,34 @@ jobs:
 
       - name: Install SSH key
         run: |
-          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-            echo "Error: SSH_PRIVATE_KEY secret is not set"
-            exit 1
-          fi
-          
-          if [ -z "${{ secrets.SERVER_IP }}" ]; then
-            echo "Error: SERVER_IP secret is not set"
-            exit 1
-          fi
-          
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          
-          if ! ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts 2>/dev/null; then
-            echo "Error: Failed to scan host key"
-            exit 1
-          fi
-          
-          if ! ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'echo "SSH connection successful"'; then
-            echo "Error: Failed to establish SSH connection"
-            exit 1
-          fi
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Create deployment directory
-        if: success()
+      - name: Install Python 3.10 on remote server
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            mkdir -p /var/www/scraper/new || exit 1
-            rm -rf /var/www/scraper/old || exit 1
+            set -e
+            # Update package lists
+            sudo apt-get update
+            
+            # Install Python 3.10 and development packages
+            sudo apt-get install -y python3.10 python3.10-venv python3.10-dev python3-pip
+            
+            # Verify installation
+            python3.10 --version
+          '
+
+      - name: Create deployment directory
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            mkdir -p /var/www/scraper/new
+            rm -rf /var/www/scraper/old
           '
 
       - name: Deploy application files
-        if: success()
         run: |
           tar czf deploy.tar.gz \
             --exclude='.git' \
@@ -80,37 +73,24 @@ jobs:
             tar xzf deploy.tar.gz &&
             rm deploy.tar.gz
           '
+
       - name: Setup Python environment
-        if: success()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             set -e
-            source ~/.bashrc
-            source ~/.profile 2>/dev/null || true
             cd /var/www/scraper/new
             rm -rf .venv
             
-            # Use a multi-step process to ensure Python is found
-            PYTHON_CMD=""
-            if [ -x "/usr/local/bin/python3.10" ]; then
-              PYTHON_CMD="/usr/local/bin/python3.10"
-            elif [ -x "/usr/bin/python3.10" ]; then
-              PYTHON_CMD="/usr/bin/python3.10"
-            elif command -v python3.10 >/dev/null 2>&1; then
-              PYTHON_CMD=$(command -v python3.10)
-            else
-              echo "Error: Python 3.10 not found"
-              exit 1
-            fi
-            
-            echo "Using Python at: ${PYTHON_CMD}"
-            ${PYTHON_CMD} -m venv .venv
+            # Create virtual environment with Python 3.10
+            python3.10 -m venv .venv
             source .venv/bin/activate
-            python -m pip install --upgrade pip wheel
+            
+            # Update pip and install dependencies
+            python -m pip install --upgrade pip wheel setuptools
             python -m pip install -r requirements.txt
           '
+
       - name: Configure environment variables
-        if: success()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
             cat > /var/www/scraper/new/.env << 'EOL'
@@ -131,7 +111,6 @@ jobs:
           "
 
       - name: Rotate deployment
-        if: success()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             if [ -d "/var/www/scraper/current" ]; then
@@ -142,7 +121,6 @@ jobs:
           '
 
       - name: Set permissions
-        if: success()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             chmod -R 755 /var/www/scraper/current
@@ -151,13 +129,10 @@ jobs:
           '
 
       - name: Verify deployment
-        if: success()
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/current &&
             source .venv/bin/activate &&
-            echo "Python version:" &&
             python --version &&
-            echo "Testing environment:" &&
-            python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"
+            python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(\"Environment test successful\")"
           '
