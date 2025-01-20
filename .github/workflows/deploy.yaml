@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     
     env:
-      SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
       SERVER_IP: ${{ secrets.SERVER_IP }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
       DB_NAME: ${{ secrets.DB_NAME }}
@@ -29,38 +28,70 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup SSH
+      - name: Install SSH key
         run: |
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+            echo "Error: SSH_PRIVATE_KEY secret is not set"
+            exit 1
+          fi
+          
+          if [ -z "${{ secrets.SERVER_IP }}" ]; then
+            echo "Error: SERVER_IP secret is not set"
+            exit 1
+          fi
+          
+          # Ensure SSH directory exists with correct permissions
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 700 ~/.ssh
+          
+          # Write SSH key with proper line endings
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H $SERVER_IP >> ~/.ssh/known_hosts
+          
+          # Add server to known hosts (with proper error handling)
+          if ! ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "Error: Failed to scan host key"
+            exit 1
+          fi
+          
+          # Test SSH connection
+          if ! ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'echo "SSH connection successful"'; then
+            echo "Error: Failed to establish SSH connection"
+            exit 1
+          fi
 
       - name: Create deployment directory
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
-            mkdir -p /var/www/scraper/new
-            rm -rf /var/www/scraper/old
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            mkdir -p /var/www/scraper/new || exit 1
+            rm -rf /var/www/scraper/old || exit 1
           '
 
       - name: Deploy application files
+        if: success()
         run: |
-          # Create tar archive of the application
+          # Create tar archive excluding unnecessary files
           tar czf deploy.tar.gz \
-            LICENSE README.md main.py bright_data_proxy.py requirements.txt schema.sql monitoring.sql \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='*.pyc' \
+            --exclude='__pycache__' \
+            LICENSE README.md main.py requirements.txt schema.sql monitoring.sql \
             scrapers/
 
           # Copy and extract files
-          scp -i ~/.ssh/deploy_key deploy.tar.gz $SERVER_USER@$SERVER_IP:/var/www/scraper/new/
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
+          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/new/
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new && 
             tar xzf deploy.tar.gz &&
             rm deploy.tar.gz
           '
 
       - name: Setup Python environment
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new &&
             python3 -m venv .venv &&
             source .venv/bin/activate &&
@@ -69,28 +100,31 @@ jobs:
           '
 
       - name: Configure environment variables
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
-            cat > /var/www/scraper/new/.env << EOL
-            DB_NAME=${DB_NAME}
-            DB_HOST=${DB_HOST}
-            DB_USER=${DB_USER}
-            DB_PASSWORD=${DB_PASSWORD}
-            DB_PORT=${DB_PORT}
-            REQUEST_DELAY=${REQUEST_DELAY}
-            MAX_RETRIES=${MAX_RETRIES}
-            LOGGING_LEVEL=${LOGGING_LEVEL}
-            SCRAPER_PAGES=${SCRAPER_PAGES}
-            BRIGHT_DATA_USERNAME=${BRIGHT_DATA_USERNAME}
-            BRIGHT_DATA_PASSWORD=${BRIGHT_DATA_PASSWORD}
+          # Create .env file with proper error handling
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
+            cat > /var/www/scraper/new/.env << 'EOL'
+            DB_NAME='${DB_NAME}'
+            DB_HOST='${DB_HOST}'
+            DB_USER='${DB_USER}'
+            DB_PASSWORD='${DB_PASSWORD}'
+            DB_PORT='${DB_PORT}'
+            REQUEST_DELAY='${REQUEST_DELAY}'
+            MAX_RETRIES='${MAX_RETRIES}'
+            LOGGING_LEVEL='${LOGGING_LEVEL}'
+            SCRAPER_PAGES='${SCRAPER_PAGES}'
+            BRIGHT_DATA_USERNAME='${BRIGHT_DATA_USERNAME}'
+            BRIGHT_DATA_PASSWORD='${BRIGHT_DATA_PASSWORD}'
             EOL
 
             chmod 600 /var/www/scraper/new/.env
           "
 
       - name: Rotate deployment
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             if [ -d "/var/www/scraper/current" ]; then
               mv /var/www/scraper/current /var/www/scraper/old
             fi
@@ -99,17 +133,22 @@ jobs:
           '
 
       - name: Set permissions
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             chmod -R 755 /var/www/scraper/current
             mkdir -p /var/www/scraper/current/logs
             chmod 777 /var/www/scraper/current/logs
           '
 
       - name: Verify deployment
+        if: success()
         run: |
-          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/current &&
             source .venv/bin/activate &&
-            python3 -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"
+            if ! python3 -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"; then
+              echo "Error: Failed to verify deployment"
+              exit 1
+            fi
           '
