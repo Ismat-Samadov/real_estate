@@ -40,21 +40,16 @@ jobs:
             exit 1
           fi
           
-          # Ensure SSH directory exists with correct permissions
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
-          # Write SSH key with proper line endings
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          # Add server to known hosts (with proper error handling)
           if ! ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts 2>/dev/null; then
             echo "Error: Failed to scan host key"
             exit 1
           fi
           
-          # Test SSH connection
           if ! ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'echo "SSH connection successful"'; then
             echo "Error: Failed to establish SSH connection"
             exit 1
@@ -71,7 +66,6 @@ jobs:
       - name: Deploy application files
         if: success()
         run: |
-          # Create tar archive excluding unnecessary files
           tar czf deploy.tar.gz \
             --exclude='.git' \
             --exclude='.github' \
@@ -80,7 +74,6 @@ jobs:
             LICENSE README.md main.py bright_data_proxy.py requirements.txt schema.sql monitoring.sql \
             scrapers/
 
-          # Copy and extract files
           scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/new/
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new && 
@@ -94,26 +87,11 @@ jobs:
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper/new &&
             
-            # Find Python 3.10 executable
-            PYTHON_PATH=$(which python3.10 || which /usr/local/bin/python3.10 || which /usr/bin/python3.10)
-            
-            if [ -z "$PYTHON_PATH" ]; then
-              echo "Python 3.10 not found in standard locations. Checking all possible locations..."
-              PYTHON_PATH=$(find / -name "python3.10" -type f 2>/dev/null | head -n 1)
-            fi
-            
-            if [ -z "$PYTHON_PATH" ]; then
-              echo "Error: Python 3.10 not found"
-              exit 1
-            fi
-            
-            echo "Using Python at: $PYTHON_PATH"
-            
             # Remove old venv if exists
             rm -rf .venv
             
-            # Create new venv with found Python
-            $PYTHON_PATH -m venv .venv &&
+            # Create new venv with Python 3.10
+            /usr/local/bin/python3.10 -m venv .venv &&
             source .venv/bin/activate &&
             
             # Verify Python version
@@ -124,11 +102,9 @@ jobs:
             python -m pip install -r requirements.txt
           '
 
-
       - name: Configure environment variables
         if: success()
         run: |
-          # Create .env file with proper error handling
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
             cat > /var/www/scraper/new/.env << 'EOL'
             DB_NAME='${DB_NAME}'
@@ -174,7 +150,7 @@ jobs:
             cd /var/www/scraper/current &&
             source .venv/bin/activate &&
             echo "Python version:" &&
-            python3 --version &&
+            python --version &&
             echo "Testing environment:" &&
-            python3 -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"
+            python -c "from dotenv import load_dotenv; load_dotenv(); import os; print(f\"DB_HOST: {os.getenv(\"DB_HOST\")}\");"
           '
