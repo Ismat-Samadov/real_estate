@@ -60,23 +60,3 @@ jobs:
             rm deploy.tar.gz &&
             mkdir -p logs
           '
-
-      - name: Configure environment variables
-        run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
-            cat > /var/www/scraper/.env << 'EOL'
-            DB_NAME=${DB_NAME}
-            DB_HOST=${DB_HOST}
-            DB_USER=${DB_USER}
-            DB_PASSWORD=${DB_PASSWORD}
-            DB_PORT=${DB_PORT}
-            REQUEST_DELAY=${REQUEST_DELAY}
-            MAX_RETRIES=${MAX_RETRIES}
-            LOGGING_LEVEL=${LOGGING_LEVEL}
-            SCRAPER_PAGES=${SCRAPER_PAGES}
-            BRIGHT_DATA_USERNAME=${BRIGHT_DATA_USERNAME}
-            BRIGHT_DATA_PASSWORD=${BRIGHT_DATA_PASSWORD}
-            EOL
-
-            chmod 600 /var/www/scraper/.env
-          "
