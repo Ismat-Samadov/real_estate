@@ -73,4 +73,5 @@ jobs:
             rm deploy.tar.gz &&
             mkdir -p logs &&
             chmod 600 .env
+            chmod +x run_scraper.sh
           '
