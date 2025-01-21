@@ -85,5 +85,6 @@ jobs:
           scp -i ~/.ssh/deploy_key setup_cron.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             cd /var/www/scraper && 
-            sudo bash setup_cron.sh
+            chmod +x setup_cron.sh &&
+            ./setup_cron.sh
           '

@@ -6,11 +6,19 @@ set -x
 # Exit on any error
 set -e
 
+# Store sudo password
+SUDO_PASSWORD="Scrapper@1213"
+
 # Setup script for real estate scraper cron job
 echo "Setting up cron job for real estate scraper..."
 
+# Function to run sudo commands with password
+sudo_cmd() {
+    echo $SUDO_PASSWORD | sudo -S $@
+}
+
 # Create the run script
-cat > /var/www/scraper/run_scraper.sh << 'EOL'
+sudo_cmd bash -c 'cat > /var/www/scraper/run_scraper.sh << '\''EOL'\''
 #!/bin/bash
 set -e
 
@@ -31,17 +39,17 @@ python main.py
 
 # Deactivate virtual environment
 deactivate
-EOL
+EOL'
 
 # Make run script executable
-chmod +x /var/www/scraper/run_scraper.sh
+sudo_cmd chmod +x /var/www/scraper/run_scraper.sh
 
-# Create logs directory
-mkdir -p /var/www/scraper/logs
-chown scraper:scraper /var/www/scraper/logs
+# Create logs directory and set permissions
+sudo_cmd mkdir -p /var/www/scraper/logs
+sudo_cmd chown -R scraper:scraper /var/www/scraper/logs
 
 # Set timezone to Asia/Baku
-timedatectl set-timezone Asia/Baku
+sudo_cmd timedatectl set-timezone Asia/Baku
 
 # Create new crontab entry
 (crontab -l 2>/dev/null || true; echo "0 */2 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1") | crontab -
