@@ -45,12 +45,25 @@ jobs:
 
       - name: Deploy files
         run: |
+          # Create environment file
+          echo "DB_NAME=${{ secrets.DB_NAME }}" > .env
+          echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DB_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+          echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
+          echo "REQUEST_DELAY=${{ secrets.REQUEST_DELAY }}" >> .env
+          echo "MAX_RETRIES=${{ secrets.MAX_RETRIES }}" >> .env
+          echo "LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}" >> .env
+          echo "SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}" >> .env
+          echo "BRIGHT_DATA_USERNAME=${{ secrets.BRIGHT_DATA_USERNAME }}" >> .env
+          echo "BRIGHT_DATA_PASSWORD=${{ secrets.BRIGHT_DATA_PASSWORD }}" >> .env
+
           tar czf deploy.tar.gz \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='*.pyc' \
             --exclude='__pycache__' \
-            LICENSE README.md main.py bright_data_proxy.py requirements.txt schema.sql monitoring.sql \
+            LICENSE README.md main.py bright_data_proxy.py requirements.txt schema.sql monitoring.sql .env \
             scrapers/
 
           scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/

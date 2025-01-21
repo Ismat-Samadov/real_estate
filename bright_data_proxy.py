@@ -1,11 +1,6 @@
 import os
 import logging
 import aiohttp
-from typing import Optional
-from dotenv import load_dotenv
-import os
-import logging
-import aiohttp
 import asyncio
 import random
 from typing import Optional
