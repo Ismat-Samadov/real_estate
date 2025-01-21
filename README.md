@@ -145,7 +145,7 @@ All this data is stored in a structured MySQL database for analysis and tracking
 
 ```
 real_estate/
-├── LICENSE                 # MIT License
+├── LICENSE                # MIT License
 ├── README.md              # Documentation
 ├── bright_data_proxy.py   # Proxy configuration
 ├── logs/                  # Application logging
