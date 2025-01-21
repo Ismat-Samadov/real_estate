@@ -63,28 +63,54 @@ jobs:
 
       - name: Configure environment variables
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
-            cat > /var/www/scraper/.env << 'EOL'
-            DB_NAME='${DB_NAME}'
-            DB_HOST='${DB_HOST}'
-            DB_USER='${DB_USER}'
-            DB_PASSWORD='${DB_PASSWORD}'
-            DB_PORT='${DB_PORT}'
-            REQUEST_DELAY='${REQUEST_DELAY}'
-            MAX_RETRIES='${MAX_RETRIES}'
-            LOGGING_LEVEL='${LOGGING_LEVEL}'
-            SCRAPER_PAGES='${SCRAPER_PAGES}'
-            BRIGHT_DATA_USERNAME='${BRIGHT_DATA_USERNAME}'
-            BRIGHT_DATA_PASSWORD='${BRIGHT_DATA_PASSWORD}'
-            EOL
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'cat > /var/www/scraper/.env << EOF
+DB_NAME=${DB_NAME}
+DB_HOST=${DB_HOST}
+DB_USER=${DB_USER}
+DB_PASSWORD=${DB_PASSWORD}
+DB_PORT=${DB_PORT}
+REQUEST_DELAY=${REQUEST_DELAY}
+MAX_RETRIES=${MAX_RETRIES}
+LOGGING_LEVEL=${LOGGING_LEVEL}
+SCRAPER_PAGES=${SCRAPER_PAGES}
+BRIGHT_DATA_USERNAME=${BRIGHT_DATA_USERNAME}
+BRIGHT_DATA_PASSWORD=${BRIGHT_DATA_PASSWORD}
+EOF'
 
+      - name: Configure permissions
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             chmod 600 /var/www/scraper/.env
-          "
+          '
+
       - name: Setup Cron Job
         run: |
-          scp -i ~/.ssh/deploy_key setup_cron.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'cat > /var/www/scraper/run_scraper.sh << EOF
+#!/bin/bash
+set -e
+
+# Set working directory
+cd /var/www/scraper
+
+# Create virtual environment if it does not exist
+if [ ! -d "venv" ]; then
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+else
+    source venv/bin/activate
+fi
+
+# Run the scraper
+python main.py
+
+# Deactivate virtual environment
+deactivate
+EOF'
+
+      - name: Set script permissions and create cron
+        run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper && 
-            chmod +x setup_cron.sh &&
-            ./setup_cron.sh
+            chmod +x /var/www/scraper/run_scraper.sh &&
+            (crontab -l 2>/dev/null || true; echo "0 */2 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1") | crontab -
           '
