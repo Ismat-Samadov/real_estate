@@ -6,6 +6,44 @@ A high-performance Python web scraper for collecting and analyzing real estate l
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Scraping](https://github.com/Ismat-Samadov/real_estate/actions/workflows/scraper.yaml/badge.svg)](https://github.com/Ismat-Samadov/real_estate/actions/workflows/scraper.yaml)
 
+## 🤔 What It Does
+
+This project automatically collects real estate listings data from major Azerbaijani property websites. For each property listing, it gathers:
+
+- Basic Details: Price, number of rooms, floor level, total area
+- Location Info: Address, district, nearby metro stations, coordinates
+- Property Features: Repairs status, amenities, building type
+- Media Content: Photos, descriptions
+- Contact Info: Phone numbers, agent/owner status
+- Metadata: Listing date, view count, updates
+
+All this data is stored in a structured MySQL database for analysis and tracking.
+
+## 🔄 How It Works
+
+1. **Initialization**
+   - Loads configuration from `.env` file
+   - Establishes database connection
+   - Sets up logging system
+
+2. **Scraping Process**
+   - Creates async sessions for each website
+   - Implements site-specific parsing logic
+   - Handles pagination and listing details
+   - Manages rate limiting and retries
+
+3. **Data Processing**
+   - Validates and cleans extracted data
+   - Standardizes formats across sources
+   - Handles different currencies and units
+   - Processes and stores media content
+
+4. **Storage**
+   - Checks for duplicate listings
+   - Updates existing records
+   - Maintains data integrity
+   - Logs operations and errors
+
 ## 🎯 Supported Websites
 
 | Website | Status | Features |
@@ -24,25 +62,25 @@ A high-performance Python web scraper for collecting and analyzing real estate l
 ## ✨ Key Features
 
 ### Data Collection
-- Asynchronous multi-site scraping
-- Intelligent rate limiting
+- Asynchronous multi-site scraping for efficiency
+- Smart rate limiting to avoid blocking
 - Anti-bot detection avoidance
-- Automatic retry mechanisms
-- Connection pooling
+- Automatic retry on failures
+- Connection pooling for stability
 
 ### Data Processing
-- Comprehensive property details
+- Full property details extraction
 - Location data with geocoding
-- Price analysis and tracking
+- Real-time price tracking
 - Contact information validation
-- Media content processing
+- Photo URL processing
 
 ### Infrastructure
-- MySQL database integration
-- Structured logging system
-- GitHub Actions automation
+- Robust MySQL database storage
+- Comprehensive logging
+- Automated GitHub Actions
 - Environment-based config
-- SSL/TLS security
+- Security measures
 
 ## 🛠️ Requirements
 
@@ -115,33 +153,48 @@ real_estate/
 ├── requirements.txt   # Dependencies
 ├── schema.sql         # Database schema
 └── scrapers/          # Site scrapers
-    ├── arenda.py      # Arenda.az
-    ├── bina.py        # Bina.az
-    ├── emlak.py       # Emlak.az
-    ├── ev10.py        # EV10.az
-    ├── ipoteka.py     # Ipoteka.az
-    ├── lalafo.py      # Lalafo.az
-    ├── tap.py         # Tap.az
-    ├── unvan.py       # Unvan.az
-    ├── vipemlak.py    # VipEmlak.az
-    └── yeniemlak.py   # YeniEmlak.az
+    ├── arenda.py      # Arenda.az scraper
+    ├── bina.py        # Bina.az scraper
+    ├── emlak.py       # Emlak.az scraper
+    ├── ev10.py        # EV10.az scraper
+    ├── ipoteka.py     # Ipoteka.az scraper
+    ├── lalafo.py      # Lalafo.az scraper
+    ├── tap.py         # Tap.az scraper
+    ├── unvan.py       # Unvan.az scraper
+    ├── vipemlak.py    # VipEmlak.az scraper
+    └── yeniemlak.py   # YeniEmlak.az scraper
 ```
 
-## 🔍 Monitoring
+## 📊 Data Collection Process
 
-- Application logs: `logs/scraper.log`
-- Database operations log
-- Error tracking
-- Performance metrics
+1. **Site Selection**
+   - Each scraper module targets specific website
+   - Handles unique site structure
+   - Manages site-specific features
+
+2. **Data Extraction**
+   - Parses HTML with BeautifulSoup4
+   - Handles different page layouts
+   - Extracts structured data
+
+3. **Validation & Storage**
+   - Cleans and validates data
+   - Standardizes formats
+   - Stores in MySQL database
+
+4. **Error Handling**
+   - Retries failed requests
+   - Logs errors and warnings
+   - Maintains data integrity
 
 ## 🛡️ Best Practices
 
-- Rate limiting enforcement
-- Respectful crawling
+- Rate limiting to respect servers
+- Proper user-agent identification
 - Data privacy compliance
-- Error recovery
+- Error recovery mechanisms
 - Connection pooling
-- User-agent rotation
+- Regular maintenance
 
 ## 🎯 Roadmap
 
@@ -171,8 +224,8 @@ This project is MIT licensed - see [LICENSE](LICENSE) for details.
 
 ## 🛠️ Built With
 
-- [Python](https://www.python.org/)
-- [aiohttp](https://docs.aiohttp.org/)
-- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/)
-- [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/)
-- [GitHub Actions](https://github.com/features/actions)
+- [Python](https://www.python.org/) - Core language
+- [aiohttp](https://docs.aiohttp.org/) - Async HTTP requests
+- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
+- [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/) - Database operations
+- [GitHub Actions](https://github.com/features/actions) - CI/CD automation
