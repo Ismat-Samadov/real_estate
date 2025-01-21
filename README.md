@@ -145,24 +145,27 @@ All this data is stored in a structured MySQL database for analysis and tracking
 
 ```
 real_estate/
-├── LICENSE             # MIT License
-├── README.md          # Documentation
-├── logs/              # Application logging
-│   └── scraper.log    # Detailed logs
-├── main.py            # Entry point
-├── requirements.txt   # Dependencies
-├── schema.sql         # Database schema
-└── scrapers/          # Site scrapers
-    ├── arenda.py      # Arenda.az scraper
-    ├── bina.py        # Bina.az scraper
-    ├── emlak.py       # Emlak.az scraper
-    ├── ev10.py        # EV10.az scraper
-    ├── ipoteka.py     # Ipoteka.az scraper
-    ├── lalafo.py      # Lalafo.az scraper
-    ├── tap.py         # Tap.az scraper
-    ├── unvan.py       # Unvan.az scraper
-    ├── vipemlak.py    # VipEmlak.az scraper
-    └── yeniemlak.py   # YeniEmlak.az scraper
+├── LICENSE                 # MIT License
+├── README.md              # Documentation
+├── bright_data_proxy.py   # Proxy configuration
+├── logs/                  # Application logging
+│   └── scraper.log        # Detailed logs
+├── main.py                # Application entry point
+├── monitoring.sql         # Monitoring queries
+├── requirements.txt       # Python dependencies
+├── run_scraper.sh        # Shell script for running scraper
+├── schema.sql            # Database schema
+└── scrapers/             # Individual site scrapers
+    ├── arenda.py         # Arenda.az implementation
+    ├── bina.py           # Bina.az implementation
+    ├── emlak.py          # Emlak.az implementation
+    ├── ev10.py           # EV10.az implementation
+    ├── ipoteka.py        # Ipoteka.az implementation
+    ├── lalafo.py         # Lalafo.az implementation
+    ├── tap.py            # Tap.az implementation
+    ├── unvan.py          # Unvan.az implementation
+    ├── vipemlak.py       # VipEmlak.az implementation
+    └── yeniemlak.py      # YeniEmlak.az implementation
 ```
 
 ## 📊 Data Collection Process
