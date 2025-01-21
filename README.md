@@ -21,222 +21,374 @@ A high-performance Python web scraper for collecting and analyzing real estate l
 | [unvan.az](https://unvan.az) | ✅ Active | Full listing data |
 | [vipemlak.az](https://vipemlak.az) | ✅ Active | Full listing data |
 
-## ✨ Key Features
+## 🚀 Deployment Guide
 
-### Data Collection
-- Asynchronous multi-site scraping
-- Intelligent rate limiting
-- Anti-bot detection avoidance
-- Automatic retry mechanisms
-- Connection pooling
+### Server Requirements
 
-### Data Processing
-- Comprehensive property details
-- Location data with geocoding
-- Price analysis and tracking
-- Contact information validation
-- Media content processing
+#### Hardware
+- CPU: 2+ cores recommended
+- RAM: 2GB minimum, 4GB recommended
+- Storage: 20GB minimum for database growth
+- Network: Stable internet connection with good bandwidth
 
-### Infrastructure
-- MySQL database integration
-- Structured logging system
-- GitHub Actions automation
-- Environment-based config
-- SSL/TLS security
+#### Software
+- Ubuntu 20.04 LTS or newer
+- Python 3.10+
+- MySQL 8.0+
+- Nginx (optional, for API deployment)
+- Git
+- SSL/TLS certificates
 
-## 🛠️ Technical Requirements
+### Step-by-Step Deployment
 
-- Python 3.10 or higher
-- MySQL Server 8.0+
-- 2GB RAM minimum
-- Stable internet connection
-- Linux/macOS/Windows
-
-## 📦 Installation
-
-1. **Clone and Setup**
-   ```bash
-   git clone https://github.com/Ismat-Samadov/real_estate.git
-   cd real_estate
-   python -m venv .venv
-   
-   # Linux/macOS
-   source .venv/bin/activate
-   
-   # Windows
-   .venv\Scripts\activate
-   
-   pip install -r requirements.txt
-   ```
-
-2. **Environment Configuration**
-   Create a `.env` file with the following variables:
-
-   ```env
-   # Database Configuration
-   DB_HOST=your_database_host
-   DB_USER=your_database_user
-   DB_PASSWORD=your_database_password
-   DB_NAME=your_database_name
-   PORT=27566
-   SSL_CERT=your_ssl_certificate
-
-   # Scraper Configuration
-   REQUEST_DELAY=1
-   MAX_RETRIES=5
-   LOGGING_LEVEL=INFO
-   SCRAPER_PAGES=2
-
-   # Optional Features
-   ENABLE_PROXY=false
-   PROXY_ROTATION_INTERVAL=600
-   ```
-
-3. **Database Setup**
-   ```bash
-   mysql -u your_user -p your_database < schema.sql
-   ```
-
-## 🚀 Usage
-
-### Basic Operation
+#### 1. Server Setup
 ```bash
-python main.py
+# Update system
+sudo apt update && sudo apt upgrade -y
+
+# Install required packages
+sudo apt install -y python3.10 python3.10-venv python3-pip mysql-server nginx git
+
+# Install SSL certificates
+sudo apt install -y certbot python3-certbot-nginx
 ```
 
-### Command Line Options (Coming Soon)
+#### 2. Database Setup
 ```bash
-# Scrape specific sites
-python main.py --sites bina,emlak
+# Secure MySQL installation
+sudo mysql_secure_installation
 
-# Set custom page limits
-python main.py --pages 5
-
-# Export data
-python main.py --export csv
+# Create database and user
+sudo mysql -u root -p
 ```
 
-## 📁 Project Structure
-
-```
-real_estate/
-├── LICENSE             # MIT License
-├── README.md          # Documentation
-├── ca.pem             # SSL Certificate
-├── logs/              # Application logging
-│   └── scraper.log    # Detailed logs
-├── main.py            # Application entry point
-├── requirements.txt   # Dependencies
-├── schema.sql        # Database schema
-└── scrapers/         # Individual site scrapers
-    ├── arenda.py     # Arenda.az implementation
-    ├── bina.py       # Bina.az implementation
-    ├── emlak.py      # Emlak.az implementation
-    ├── ev10.py       # EV10.az implementation
-    ├── ipoteka.py    # Ipoteka.az implementation
-    ├── lalafo.py     # Lalafo.az implementation
-    ├── tap.py        # Tap.az implementation
-    ├── unvan.py      # Unvan.az implementation
-    ├── vipemlak.py   # VipEmlak.az implementation
-    └── yeniemlak.py  # YeniEmlak.az implementation
-```
-
-## 💾 Database Schema
-
-### Properties Table
 ```sql
-CREATE TABLE properties (
-    id BIGINT PRIMARY KEY AUTO_INCREMENT,
-    listing_id VARCHAR(50) UNIQUE,
-    title VARCHAR(200),
-    price DECIMAL(12, 2),
-    rooms SMALLINT,
-    area DECIMAL(10, 2),
-    ... # See schema.sql for complete definition
-);
+CREATE DATABASE remart_scraper CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'remart_scraper'@'localhost' IDENTIFIED BY 'your_strong_password';
+GRANT ALL PRIVILEGES ON remart_scraper.* TO 'remart_scraper'@'localhost';
+FLUSH PRIVILEGES;
 ```
 
-## 🔍 Monitoring
+#### 3. Application Deployment
 
-### Logging
-- Application logs: `logs/scraper.log`
-- Database operations log
-- Performance metrics
-- Error tracking
+```bash
+# Create application user
+sudo useradd -m -s /bin/bash scraper
+sudo usermod -aG sudo scraper
 
-### Metrics (Coming Soon)
-- Success/failure rates
-- Response times
-- Data quality scores
-- Coverage statistics
+# Switch to application user
+su - scraper
 
-## 🛡️ Best Practices & Safety
+# Clone repository
+git clone https://github.com/Ismat-Samadov/real_estate.git
+cd real_estate
 
-- Rate limiting enforcement
-- Respectful crawling
-- Data privacy compliance
-- Error recovery
-- Connection pooling
-- User-agent rotation
+# Setup virtual environment
+python3.10 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 
-## 🔄 Development Workflow
+# Configure environment
+cp .env.example .env
+nano .env
+```
 
-1. Create feature branch
-2. Implement changes
-3. Add tests
-4. Update documentation
-5. Submit pull request
-6. Code review
-7. Merge to main
+#### 4. Environment Configuration
 
-## 🎯 Roadmap
+```env
+# Database Configuration
+DB_NAME=remart_scraper
+DB_HOST=localhost
+DB_USER=remart_scraper
+DB_PASSWORD=your_strong_password
+DB_PORT=3306
 
-### Current Status ✅
-- [x] Completed all major property website scrapers
-- [x] Implemented database schema and storage
-- [x] Set up logging and error handling
-- [x] Added GitHub Actions automation
+# Scraper Configuration
+REQUEST_DELAY=1
+MAX_RETRIES=5
+LOGGING_LEVEL=INFO
+SCRAPER_PAGES=2
 
-### Next Steps
-- [ ] Implement proxy rotation for enhanced reliability
-- [ ] Add data analytics and visualization dashboard
-- [ ] Create REST API for data access
-- [ ] Add automated testing suite
-- [ ] Implement caching layer
-- [ ] Add data export functionality
-- [ ] Create admin monitoring interface
-- [ ] Implement real-time price tracking
-- [ ] Add email notifications for price changes
+# Proxy Configuration (if using Bright Data)
+BRIGHT_DATA_USERNAME=your_username
+BRIGHT_DATA_PASSWORD=your_password
 
-## 🤝 Contributing
+# Server Configuration
+SERVER_USER=scraper
+SERVER_IP=your_server_ip
+```
 
-Contributions are welcome! See our [Contributing Guide](CONTRIBUTING.md) for details.
+#### 5. Database Initialization
+```bash
+mysql -u remart_scraper -p remart_scraper < schema.sql
+```
 
-## 📄 License
+#### 6. Setup Systemd Service
+```bash
+sudo nano /etc/systemd/system/real-estate-scraper.service
+```
 
-This project is MIT licensed - see [LICENSE](LICENSE) for details.
+```ini
+[Unit]
+Description=Real Estate Scraper Service
+After=network.target
 
-## 👥 Team
+[Service]
+User=scraper
+Group=scraper
+WorkingDirectory=/home/scraper/real_estate
+Environment=PATH=/home/scraper/real_estate/.venv/bin
+ExecStart=/home/scraper/real_estate/.venv/bin/python main.py
+Restart=always
+RestartSec=10
 
-- **Ismat Samadov** - Project Lead
-  - GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
-  - Email: [ismetsemedov@gmail.com](mailto:ismetsemedov@gmail.com)
+[Install]
+WantedBy=multi-user.target
+```
 
-## 🛠️ Built With
+```bash
+# Enable and start service
+sudo systemctl enable real-estate-scraper
+sudo systemctl start real-estate-scraper
+```
 
-- [Python](https://www.python.org/) - Core language
-- [aiohttp](https://docs.aiohttp.org/) - Async HTTP
-- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
-- [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/) - Database
-- [GitHub Actions](https://github.com/features/actions) - CI/CD
+#### 7. Logging Configuration
+```bash
+# Create log directory
+sudo mkdir -p /var/log/real-estate-scraper
+sudo chown scraper:scraper /var/log/real-estate-scraper
 
-## 📊 Stats
+# Configure logrotate
+sudo nano /etc/logrotate.d/real-estate-scraper
+```
 
-- Lines of code: 5,000+
-- Active sites: 5
-- Daily listings: ~10,000
-- Database size: Growing
+```conf
+/var/log/real-estate-scraper/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 scraper scraper
+    sharedscripts
+    postrotate
+        systemctl restart real-estate-scraper
+    endscript
+}
+```
 
-## 📫 Support
+#### 8. Monitoring Setup
+```bash
+# Install monitoring tools
+sudo apt install -y prometheus node-exporter
 
-Need help? Open an issue or contact the team.
+# Configure Prometheus for metrics
+sudo nano /etc/prometheus/prometheus.yml
+```
+
+Add scraper job:
+```yaml
+scrape_configs:
+  - job_name: 'real-estate-scraper'
+    static_configs:
+      - targets: ['localhost:8000']
+```
+
+#### 9. GitHub Actions Setup
+
+1. Add repository secrets in GitHub:
+   - `SERVER_IP`
+   - `SERVER_USER`
+   - `SSH_PRIVATE_KEY`
+   - `DB_NAME`
+   - `DB_HOST`
+   - `DB_USER`
+   - `DB_PASSWORD`
+   - `BRIGHT_DATA_USERNAME`
+   - `BRIGHT_DATA_PASSWORD`
+
+2. Configure deployment workflow:
+```yaml
+name: Deploy Real Estate Scraper
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/scraper/real_estate
+            git pull
+            source .venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart real-estate-scraper
+```
+
+### Maintenance and Monitoring
+
+#### Service Management
+```bash
+# Check service status
+sudo systemctl status real-estate-scraper
+
+# View logs
+journalctl -u real-estate-scraper -f
+
+# Restart service
+sudo systemctl restart real-estate-scraper
+```
+
+#### Database Maintenance
+```bash
+# Backup database
+mysqldump -u remart_scraper -p remart_scraper > backup-$(date +%F).sql
+
+# Monitor database size
+mysql -e "SELECT table_schema, 
+    ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)' 
+    FROM information_schema.tables 
+    WHERE table_schema = 'remart_scraper' 
+    GROUP BY table_schema;"
+```
+
+#### Log Management
+```bash
+# Check log size
+du -sh /var/log/real-estate-scraper/
+
+# Analyze logs
+tail -f /var/log/real-estate-scraper/scraper.log
+
+# Force log rotation
+sudo logrotate -f /etc/logrotate.d/real-estate-scraper
+```
+
+## 🛡️ Security Best Practices
+
+1. **Firewall Configuration**
+```bash
+# Configure UFW
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow ssh
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+2. **SSL/TLS Setup**
+```bash
+# Install SSL certificate
+sudo certbot --nginx -d your-domain.com
+```
+
+3. **Regular Updates**
+```bash
+# System updates
+sudo apt update && sudo apt upgrade -y
+
+# Python dependencies
+pip install --upgrade -r requirements.txt
+```
+
+4. **Backup Strategy**
+```bash
+# Create backup script
+nano /home/scraper/backup.sh
+```
+
+```bash
+#!/bin/bash
+BACKUP_DIR="/home/scraper/backups"
+DATE=$(date +%Y%m%d)
+mysqldump -u remart_scraper -p remart_scraper > "$BACKUP_DIR/db-$DATE.sql"
+tar -czf "$BACKUP_DIR/code-$DATE.tar.gz" /home/scraper/real_estate
+find "$BACKUP_DIR" -type f -mtime +7 -delete
+```
+
+```bash
+# Add to crontab
+0 0 * * * /home/scraper/backup.sh
+```
+
+## 📊 Monitoring Metrics
+
+- **System Metrics:**
+  - CPU usage
+  - Memory consumption
+  - Disk space
+  - Network bandwidth
+
+- **Application Metrics:**
+  - Success rate per website
+  - Average response time
+  - Number of listings scraped
+  - Database size growth
+  - Error rates
+
+- **Business Metrics:**
+  - Total active listings
+  - New listings per day
+  - Price trends
+  - Geographic distribution
+
+## 🔍 Troubleshooting
+
+### Common Issues and Solutions
+
+1. **Service Won't Start**
+```bash
+# Check logs
+journalctl -u real-estate-scraper -n 100
+
+# Verify permissions
+sudo chown -R scraper:scraper /home/scraper/real_estate
+```
+
+2. **Database Connectivity**
+```bash
+# Test connection
+mysql -u remart_scraper -p -h localhost remart_scraper
+
+# Check grants
+SHOW GRANTS FOR 'remart_scraper'@'localhost';
+```
+
+3. **Memory Issues**
+```bash
+# Check memory usage
+free -h
+top -u scraper
+```
+
+4. **Deployment Failures**
+```bash
+# Check GitHub Actions logs
+# Verify secrets
+# Test SSH connection manually
+ssh -i path/to/key scraper@your-server-ip
+```
+
+## 📫 Support and Maintenance
+
+For ongoing support:
+1. Check the issue tracker on GitHub
+2. Review logs regularly
+3. Monitor system resources
+4. Maintain regular backups
+5. Keep dependencies updated
+
+For more information or support, contact:
+- GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
+- Email: [ismetsemedov@gmail.com](mailto:ismetsemedov@gmail.com)
