@@ -80,3 +80,10 @@ jobs:
 
             chmod 600 /var/www/scraper/.env
           "
+      - name: Setup Cron Job
+        run: |
+          scp -i ~/.ssh/deploy_key setup_cron.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            cd /var/www/scraper && 
+            sudo bash setup_cron.sh
+          '
