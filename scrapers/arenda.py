@@ -78,7 +78,6 @@ class OptimizedArendaScraper:
         for attempt in range(MAX_RETRIES):
             try:
                 self.logger.info(f"Attempt {attempt + 1} of {MAX_RETRIES}")
-                # Add random delay between 1-3 seconds
                 await asyncio.sleep(DELAY + random.random() * 2)
                 
                 async with self.session.get(
@@ -86,19 +85,34 @@ class OptimizedArendaScraper:
                     params=params,
                     headers=headers,
                     cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=10)  # 10 second timeout
+                    timeout=aiohttp.ClientTimeout(total=10)
                 ) as response:
                     self.logger.info(f"Got response with status: {response.status}")
                     
                     if response.status == 200:
                         try:
-                            content = await response.text(encoding='utf-8')
-                            elapsed = time.time() - start_time
-                            self.logger.info(f"Successfully fetched content in {elapsed:.2f} seconds")
+                            # First try to read as bytes
+                            content_bytes = await response.read()
+                            
+                            # Try different encodings
+                            for encoding in ['utf-8', 'cp1251', 'iso-8859-1', 'windows-1252']:
+                                try:
+                                    content = content_bytes.decode(encoding)
+                                    elapsed = time.time() - start_time
+                                    self.logger.info(f"Successfully decoded with {encoding} in {elapsed:.2f} seconds")
+                                    return content
+                                except UnicodeDecodeError:
+                                    continue
+                            
+                            # If no encoding worked, use replacement character for errors
+                            content = content_bytes.decode('utf-8', errors='replace')
+                            self.logger.warning("Had to use replacement characters for decoding")
                             return content
-                        except UnicodeDecodeError:
-                            content = await response.read()
-                            return content.decode('utf-8', errors='replace')
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error decoding content: {str(e)}")
+                            raise
+                            
                     elif response.status == 403:
                         self.logger.warning(f"Access forbidden (403) on attempt {attempt + 1}. Might be rate-limited.")
                         await asyncio.sleep(DELAY * (attempt + 2))
