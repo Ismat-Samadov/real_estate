@@ -116,38 +116,20 @@ class EV10Scraper:
                             self.logger.error(f"Failed to parse JSON response: {e}")
                             self.logger.debug(f"Response content: {await response.text()}")
                             continue
+                    elif response.status == 403:
+                        self.logger.warning(f"Access forbidden (403) on attempt {attempt + 1}")
+                        await asyncio.sleep(DELAY * (attempt + 2))
+                        continue
+                    elif response.status == 429:  # Rate limit
+                        self.logger.warning("Rate limit hit, waiting longer")
+                        await asyncio.sleep(30)  # Longer delay for rate limits
+                        continue
+                    elif response.status >= 500:  # Server error
+                        self.logger.warning(f"Server error {response.status}")
+                        await asyncio.sleep(5)  # Short delay for server errors
+                        continue
                     else:
                         self.logger.warning(f"Failed to fetch page {page}, status: {response.status}")
-                        if response.status == 429:  # Rate limit
-                            await asyncio.sleep(random.uniform(1, 2))  # Delay between pages
-                            
-                else:
-                    # Handle non-LEASE types (HOME_SHARING, PURCHASE)
-                    listing_type = {
-                        'sale_type': listing_config['sale_type'],
-                        'db_type': listing_config['db_type']
-                    }
-                    self.logger.info(f"Processing {listing_type['sale_type']} listings")
-                    
-                    for page in range(1, pages + 1):
-                        page_listings = await self.process_page(page, listing_type)
-                        all_listings.extend(page_listings)
-                        await asyncio.sleep(random.uniform(1, 2))  # Delay between pages
-                        
-                # Add delay between listing types
-                await asyncio.sleep(random.uniform(2, 3))
-            
-            self.logger.info(f"Scraping completed. Total listings: {len(all_listings)}")
-            return all_listings
-            
-        except Exception as e:
-            self.logger.error(f"Fatal error in EV10 scraper: {str(e)}")
-            return []
-            
-        finally:
-            await self.close_session() asyncio.sleep(30)  # Longer delay for rate limits
-                        elif response.status >= 500:  # Server error
-                            await asyncio.sleep(5)  # Short delay for server errors
                         continue
                         
             except asyncio.TimeoutError:
@@ -355,7 +337,7 @@ class EV10Scraper:
             self.logger.error(f"Error processing page {page}: {str(e)}")
             
         return listings
-
+                          
     async def run(self, pages: int = 1) -> List[Dict]:
         """Run the scraper for specified number of pages"""
         try:
@@ -377,4 +359,30 @@ class EV10Scraper:
                         for page in range(1, pages + 1):
                             page_listings = await self.process_page(page, listing_type)
                             all_listings.extend(page_listings)
-                            await
+                            await asyncio.sleep(random.uniform(1, 2))  # Delay between pages
+                            
+                else:
+                    # Handle non-LEASE types (HOME_SHARING, PURCHASE)
+                    listing_type = {
+                        'sale_type': listing_config['sale_type'],
+                        'db_type': listing_config['db_type']
+                    }
+                    self.logger.info(f"Processing {listing_type['sale_type']} listings")
+                    
+                    for page in range(1, pages + 1):
+                        page_listings = await self.process_page(page, listing_type)
+                        all_listings.extend(page_listings)
+                        await asyncio.sleep(random.uniform(1, 2))  # Delay between pages
+                        
+                # Add delay between listing types
+                await asyncio.sleep(random.uniform(2, 3))
+            
+            self.logger.info(f"Scraping completed. Total listings: {len(all_listings)}")
+            return all_listings
+            
+        except Exception as e:
+            self.logger.error(f"Fatal error in EV10 scraper: {str(e)}")
+            return []
+            
+        finally:
+            await self.close_session()
