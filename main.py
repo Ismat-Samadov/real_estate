@@ -441,68 +441,82 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-    
 async def run_scrapers():
-    """Run all scrapers with enhanced proxy support"""
+    """Run all scrapers and collect performance statistics"""
     logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    stats = {
+        'success_count': defaultdict(int),
+        'error_count': defaultdict(int),
+        'error_details': defaultdict(lambda: defaultdict(int)),
+        'duration': 0,
+        'avg_time_per_listing': 0
+    }
+    
     all_results = []
     
-    # Load configuration
-    load_dotenv()
-    pages = int(os.getenv('SCRAPER_PAGES', 2))
-    
     try:
-        # Initialize and verify proxy manager
         proxy_manager = BrightDataProxy()
-        
         if not await proxy_manager.verify_proxy():
             logger.error("Failed to verify Bright Data proxy connection")
             return []
             
-        logger.info("Proxy verification successful, starting scrapers")
-        
         scrapers = [
-            ("Arenda.az", OptimizedArendaScraper()),
-            ("EV10.az", EV10Scraper()),
-            ("YeniEmlak.az", YeniEmlakScraper()),
-            ("Emlak.az", EmlakAzScraper()),
-            ("Bina.az", BinaScraper()),
-            ("Ipoteka.az", IpotekaScraper()),
-            ("Unvan.az", UnvanScraper()),
-            ("VipEmlak.az", VipEmlakScraper()),
-            ("Lalafo.az", LalafoScraper()),
+            # ("Arenda.az", OptimizedArendaScraper()),
+            # ("EV10.az", EV10Scraper()),
+            # ("YeniEmlak.az", YeniEmlakScraper()),
+            # ("Emlak.az", EmlakAzScraper()),
+            # ("Bina.az", BinaScraper()),
+            # ("Ipoteka.az", IpotekaScraper()),
+            # ("Unvan.az", UnvanScraper()),
+            # ("VipEmlak.az", VipEmlakScraper()),
+            # ("Lalafo.az", LalafoScraper()),
             ("Tap.az", TapAzScraper())
         ]
         
         for name, scraper in scrapers:
             try:
+                scraper_start = time.time()
                 logger.info(f"Starting {name} scraper")
                 
-                # Apply proxy configuration
                 proxy_manager.apply_to_scraper(scraper)
-                
-                # Run the scraper
-                results = await scraper.run(pages=pages)
+                results = await scraper.run(pages=int(os.getenv('SCRAPER_PAGES', 2)))
                 
                 if results:
-                    logger.info(f"{name} scraper completed: {len(results)} listings")
+                    stats['success_count'][name] = len(results)
                     all_results.extend(results)
-                else:
-                    logger.warning(f"{name} scraper returned no results")
-                    
+                
+                scraper_duration = time.time() - scraper_start
+                logger.info(f"{name} completed in {scraper_duration:.2f}s")
+                
             except Exception as e:
-                logger.error(f"Error running {name} scraper: {str(e)}", exc_info=True)
-                continue
+                stats['error_count'][name] += 1
+                error_type = type(e).__name__
+                stats['error_details'][name][error_type] += 1
+                logger.error(f"Error in {name}: {str(e)}", exc_info=True)
             
-            # Add delay between scrapers
             await asyncio.sleep(random.uniform(2, 5))
+    
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
+    
+    finally:
+        total_duration = time.time() - start_time
+        total_listings = len(all_results)
+        
+        stats['duration'] = total_duration
+        stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
+        
+        # Send report via Telegram
+        try:
+            reporter = TelegramReporter()
+            await reporter.send_report(stats)
+        except Exception as e:
+            logger.error(f"Failed to send Telegram report: {str(e)}")
         
         return all_results
-        
-    except Exception as e:
-        logger.error(f"Fatal error in run_scrapers: {str(e)}", exc_info=True)
-        return []
-  
+    
 async def main():
     """Main async function to run scrapers"""
     logger = setup_logging()
