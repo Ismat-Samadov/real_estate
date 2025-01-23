@@ -468,10 +468,10 @@ async def run_scrapers():
             
         scrapers = [
             # ("Arenda.az", OptimizedArendaScraper()),
-            # ("EV10.az", EV10Scraper()),
+            ("EV10.az", EV10Scraper()),
             # ("YeniEmlak.az", YeniEmlakScraper()),
             # ("Emlak.az", EmlakAzScraper()),
-            ("Bina.az", BinaScraper()),
+            # ("Bina.az", BinaScraper()),
             # ("Ipoteka.az", IpotekaScraper()),
             # ("Unvan.az", UnvanScraper()),
             # ("VipEmlak.az", VipEmlakScraper()),
