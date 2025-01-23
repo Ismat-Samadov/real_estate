@@ -25,7 +25,7 @@ import re
 import random
 import time
 from collections import defaultdict
-
+from telegram_reporter import TelegramReporter
 
 
 def setup_logging():
