@@ -24,6 +24,8 @@ import json
 import re
 import random
 import time
+from collections import defaultdict
+
 
 def setup_logging():
     """Setup enhanced logging configuration"""
