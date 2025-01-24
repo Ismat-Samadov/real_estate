@@ -477,7 +477,7 @@ async def run_scrapers():
         #     ("VipEmlak.az", VipEmlakScraper()),
         #     ("Lalafo.az", LalafoScraper()),
         #     ("Tap.az", TapAzScraper())
-        # ]
+        ]
         
         for name, scraper in scrapers:
             try:
