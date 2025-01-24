@@ -27,7 +27,6 @@ import time
 from collections import defaultdict
 from telegram_reporter import TelegramReporter
 
-
 def setup_logging():
     """Setup enhanced logging configuration"""
     log_dir = Path('logs')
