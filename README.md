@@ -136,7 +136,6 @@ All this data is stored in a structured MySQL database for analysis and tracking
    mysql -u your_user -p your_database < schema.sql
    ```
 
-```markdown
 5. **Run Scraper**
    ```bash
    python main.py
