@@ -459,18 +459,18 @@ async def run_scrapers():
     
     page_config = {
         "Bina.az": 4,
-        "Tap.az": 4,        
-        "Emlak.az": 3,      
-        "Lalafo.az": 3,     
-        "EV10.az": 1,       
-        "Unvan.az": 2,       
-        "Arenda.az": 1,      
-        "YeniEmlak.az": 1,   
-        "Ipoteka.az": 1,     
-        "VipEmlak.az": 1     
+        # "Tap.az": 1,        
+        # "Emlak.az": 1,      
+        # "Lalafo.az": 4,     
+        # "EV10.az": 1,       
+        # "Unvan.az": 2,       
+        # "Arenda.az": 1,      
+        # "YeniEmlak.az": 1,   
+        # "Ipoteka.az": 1,     
+        # "VipEmlak.az": 1     
     }
     
-    all_results = []
+    all_results = [] 
     
     try:
         proxy_manager = BrightDataProxy()
