@@ -444,8 +444,8 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
+
 async def run_scrapers():
-    """Run all scrapers and collect performance statistics"""
     logger = logging.getLogger(__name__)
     start_time = time.time()
     
@@ -455,6 +455,19 @@ async def run_scrapers():
         'error_details': defaultdict(lambda: defaultdict(int)),
         'duration': 0,
         'avg_time_per_listing': 0
+    }
+    
+    page_config = {
+        "Bina.az": 4,       # Most active portal
+        "Tap.az": 4,        # High volume
+        "Emlak.az": 3,      # Regular updates
+        "Lalafo.az": 3,     # Frequent listings
+        "EV10.az": 2,       # Medium volume
+        "Unvan.az": 2,      # Medium volume
+        "Arenda.az": 1,     # Lower volume
+        "YeniEmlak.az": 1,  # Lower frequency
+        "Ipoteka.az": 1,    # Specialized listings
+        "VipEmlak.az": 1    # Premium, low volume
     }
     
     all_results = []
@@ -484,7 +497,7 @@ async def run_scrapers():
                 logger.info(f"Starting {name} scraper")
                 
                 proxy_manager.apply_to_scraper(scraper)
-                results = await scraper.run(pages=int(os.getenv('SCRAPER_PAGES', 2)))
+                results = await scraper.run(pages=page_config[name])
                 
                 if results:
                     stats['success_count'][name] = len(results)
@@ -511,7 +524,6 @@ async def run_scrapers():
         stats['duration'] = total_duration
         stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
         
-        # Send report via Telegram
         try:
             reporter = TelegramReporter()
             await reporter.send_report(stats)
@@ -519,7 +531,7 @@ async def run_scrapers():
             logger.error(f"Failed to send Telegram report: {str(e)}")
         
         return all_results
-    
+
 async def main():
     """Main async function to run scrapers"""
     logger = setup_logging()
