@@ -459,18 +459,18 @@ async def run_scrapers():
     
     page_config = {
         "Bina.az": 4,
-        # "Tap.az": 1,        
-        # "Emlak.az": 1,      
-        # "Lalafo.az": 4,     
-        # "EV10.az": 1,       
-        # "Unvan.az": 2,       
-        # "Arenda.az": 1,      
-        # "YeniEmlak.az": 1,   
-        # "Ipoteka.az": 1,     
-        # "VipEmlak.az": 1     
+        "Tap.az": 4,        
+        "Emlak.az": 4,      
+        "Lalafo.az": 4,     
+        "EV10.az": 1,       
+        "Unvan.az": 1,       
+        "Arenda.az": 1,      
+        "YeniEmlak.az": 1,   
+        "Ipoteka.az": 1,     
+        "VipEmlak.az": 1     
     }
     
-    all_results = [] 
+    all_results = []
     
     try:
         proxy_manager = BrightDataProxy()
@@ -479,16 +479,16 @@ async def run_scrapers():
             return []
             
         scrapers = [
-            # ("Arenda.az", OptimizedArendaScraper()),
-            # ("EV10.az", EV10Scraper()),
-            # ("YeniEmlak.az", YeniEmlakScraper()),
-            # ("Emlak.az", EmlakAzScraper()),
+            ("Arenda.az", OptimizedArendaScraper()),
+            ("EV10.az", EV10Scraper()),
+            ("YeniEmlak.az", YeniEmlakScraper()),
+            ("Emlak.az", EmlakAzScraper()),
             ("Bina.az", BinaScraper()),
-            # ("Ipoteka.az", IpotekaScraper()),
-            # ("Unvan.az", UnvanScraper()),
-            # ("VipEmlak.az", VipEmlakScraper()),
-            # ("Lalafo.az", LalafoScraper()),
-            # ("Tap.az", TapAzScraper())
+            ("Ipoteka.az", IpotekaScraper()),
+            ("Unvan.az", UnvanScraper()),
+            ("VipEmlak.az", VipEmlakScraper()),
+            ("Lalafo.az", LalafoScraper()),
+            ("Tap.az", TapAzScraper())
         ]
         
         for name, scraper in scrapers:

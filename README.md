@@ -136,10 +136,30 @@ All this data is stored in a structured MySQL database for analysis and tracking
    mysql -u your_user -p your_database < schema.sql
    ```
 
+```markdown
 5. **Run Scraper**
    ```bash
    python main.py
    ```
+
+## ⏱️ Automated Scheduling
+
+The scraper can be configured to run automatically using crontab. Add the following commands:
+
+```bash
+# Add scraper to crontab (runs every 2 hours)
+(crontab -l 2>/dev/null || true; echo "0 */2 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1") | crontab -
+
+# Set required environment variables
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONPATH=/var/www/scraper
+```
+
+What these do:
+- The crontab entry (`0 */2 * * *`) runs the scraper every 2 hours
+- Output is logged to `/var/www/scraper/logs/cron.log`
+- PATH sets required system directories
+- PYTHONPATH ensures Python can find the scraper modules
 
 ## 📁 Project Structure
 
