@@ -89,6 +89,45 @@ All this data is stored in a structured MySQL database for analysis and tracking
 - Virtual environment
 - Git
 
+```markdown
+## 📱 Telegram Integration
+
+The scraper includes automated reporting via Telegram:
+
+1. **Setup**
+   - Create a Telegram bot via [@BotFather](https://t.me/botfather)
+   - Get your bot token
+   - Create a channel and add bot as admin
+   - Get channel ID (forward message to [@userinfobot](https://t.me/userinfobot))
+
+2. **Features**
+   - Real-time scraping status updates
+   - Success/failure statistics per website
+   - Error reporting and diagnostics
+   - Performance metrics
+   - Total listings collected
+
+3. **Report Format**
+   ```
+   📊 Scraping Report YYYY-MM-DD HH:MM
+   Total Listings: X
+   Total Errors: Y
+   
+   Website Status:
+   ✅ bina.az: 
+     • Listings: 100
+     • Errors: 0
+   
+   ⚠️ tap.az:
+     • Listings: 80
+     • Errors: 2
+   
+   Performance:
+   Duration: 120.5 seconds
+   Avg Time/Listing: 0.5 seconds
+   ```
+```
+
 ## 📦 Installation
 
 1. **Clone Repository**
@@ -112,7 +151,9 @@ All this data is stored in a structured MySQL database for analysis and tracking
 
 3. **Configure Environment**
    Create `.env` file:
-   ```env
+   Here's the updated environment configuration section and Telegram integration explanation for your README:
+
+```env
 # Database
 DB_NAME=your_database_name
 DB_HOST=your_host
@@ -138,7 +179,8 @@ SUDO_PASSWORD=your_sudo_password
 # Telegram Integration
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_CHAT_ID=your_chat_id
-   ```
+```
+
 
 4. **Initialize Database**
    ```bash
