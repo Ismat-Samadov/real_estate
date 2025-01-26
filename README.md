@@ -113,22 +113,31 @@ All this data is stored in a structured MySQL database for analysis and tracking
 3. **Configure Environment**
    Create `.env` file:
    ```env
-   # Database
-   DB_NAME=remart_scraper
-   DB_HOST=your_host
-   DB_USER=your_user
-   DB_PASSWORD=your_password
-   DB_PORT=3306
+# Database
+DB_NAME=your_database_name
+DB_HOST=your_host
+DB_USER=your_user
+DB_PASSWORD=your_password
+DB_PORT=3306
 
-   # Scraper
-   REQUEST_DELAY=1
-   MAX_RETRIES=5
-   LOGGING_LEVEL=INFO
-   SCRAPER_PAGES=2
+# Scraper
+REQUEST_DELAY=1
+MAX_RETRIES=5
+LOGGING_LEVEL=INFO
+SCRAPER_PAGES=2
 
-   # Proxy (optional)
-   BRIGHT_DATA_USERNAME=your_username
-   BRIGHT_DATA_PASSWORD=your_password
+# Proxy (optional)
+BRIGHT_DATA_USERNAME=your_username
+BRIGHT_DATA_PASSWORD=your_password
+
+# Server (optional)
+SERVER_USER=your_server_user
+SERVER_IP=your_server_ip
+SUDO_PASSWORD=your_sudo_password
+
+# Telegram Integration
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
    ```
 
 4. **Initialize Database**
