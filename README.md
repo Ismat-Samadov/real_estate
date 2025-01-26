@@ -89,7 +89,6 @@ All this data is stored in a structured MySQL database for analysis and tracking
 - Virtual environment
 - Git
 
-```markdown
 ## 📱 Telegram Integration
 
 The scraper includes automated reporting via Telegram:
@@ -125,7 +124,7 @@ The scraper includes automated reporting via Telegram:
    Performance:
    Duration: 120.5 seconds
    Avg Time/Listing: 0.5 seconds
-   ```
+
 
 ## 📦 Installation
 
