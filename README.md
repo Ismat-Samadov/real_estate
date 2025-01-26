@@ -126,7 +126,6 @@ The scraper includes automated reporting via Telegram:
    Duration: 120.5 seconds
    Avg Time/Listing: 0.5 seconds
    ```
-```
 
 ## 📦 Installation
 
