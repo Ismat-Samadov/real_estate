@@ -640,6 +640,7 @@ async def run_scrapers():
             # ("Arenda.az", OptimizedArendaScraper())
         ]
         
+        
         for name, scraper in scrapers:
             try:
                 scraper_start = time.time()
