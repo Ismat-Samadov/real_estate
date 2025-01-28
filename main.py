@@ -336,31 +336,16 @@ def validate_listing_data(listing: Dict) -> Dict:
 
     return validated
 
-def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
-    """Save listings to database with enhanced statistics tracking"""
+def save_listings_to_db(connection, listings: List[Dict]) -> None:
+    """Save listings to database with enhanced data validation and error handling"""
     logger = logging.getLogger(__name__)
-    stats = {
-        'new_listings': 0,
-        'updated_listings': 0,
-        'site_stats': defaultdict(lambda: {'new': 0, 'updated': 0}),
-        'price_stats': {
-            'min': float('inf'),
-            'max': 0,
-            'sum': 0,
-            'count': 0
-        }
-    }
-    cursor = None
+    successful = 0
+    failed = 0
     
     try:
+        # Ensure connection is alive
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
-        
-        # First, get existing listing IDs
-        existing_listings = set()
-        cursor.execute("SELECT listing_id FROM properties")
-        for (listing_id,) in cursor:
-            existing_listings.add(listing_id)
         
         insert_query = """
             INSERT INTO properties (
@@ -385,20 +370,20 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
         
         for listing in listings:
             try:
+                # Validate and clean data
                 sanitized = validate_listing_data(listing)
-                if not sanitized or not sanitized.get('listing_id'):
+                
+                if not sanitized:
+                    logger.warning("Empty listing data after validation, skipping")
+                    failed += 1
                     continue
                 
-                # Track price statistics
-                if 'price' in sanitized and sanitized['price']:
-                    price = float(sanitized['price'])
-                    if price > 0:  # Only track valid prices
-                        stats['price_stats']['min'] = min(stats['price_stats']['min'], price)
-                        stats['price_stats']['max'] = max(stats['price_stats']['max'], price)
-                        stats['price_stats']['sum'] += price
-                        stats['price_stats']['count'] += 1
+                if not sanitized.get('listing_id'):
+                    logger.warning("Missing listing_id, skipping")
+                    failed += 1
+                    continue
                 
-                # Prepare values for insertion
+                # Prepare values in the correct order
                 values = (
                     sanitized.get('listing_id'),
                     sanitized.get('title'),
@@ -431,45 +416,34 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
                     sanitized.get('listing_date')
                 )
                 
-                # Execute insert/update
+                # Execute with proper type handling
                 cursor.execute(insert_query, values)
+                successful += 1
                 
-                # Track statistics
-                website = sanitized.get('source_website', 'unknown')
-                if sanitized['listing_id'] in existing_listings:
-                    stats['updated_listings'] += 1
-                    stats['site_stats'][website]['updated'] += 1
-                else:
-                    stats['new_listings'] += 1
-                    stats['site_stats'][website]['new'] += 1
-                
-                # Commit every 50 operations
-                if (stats['new_listings'] + stats['updated_listings']) % 50 == 0:
+                # Commit every 50 successful insertions
+                if successful % 50 == 0:
                     connection.commit()
-            except Exception as e:
-                logger.error(f"Error processing listing {sanitized.get('listing_id')}: {str(e)}")
-                continue
+                    logger.debug(f"Committed batch of 50 listings. Total successful: {successful}")
                     
-        # Final commit
+            except Exception as e:
+                failed += 1
+                logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
+                continue
+        
+        # Final commit for any remaining listings
         connection.commit()
         
-        # Calculate average price
-        if stats['price_stats']['count'] > 0:
-            stats['price_stats']['avg'] = stats['price_stats']['sum'] / stats['price_stats']['count']
-        del stats['price_stats']['sum']  # Remove sum from final stats
+        # Close cursor
+        cursor.close()
         
         # Log results
-        logger.info(f"New listings: {stats['new_listings']}")
-        logger.info(f"Updated listings: {stats['updated_listings']}")
-        
-        return stats
-        
+        logger.info(f"Successfully saved {successful} listings")
+        if failed > 0:
+            logger.warning(f"Failed to save {failed} listings")
+            
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-    finally:
-        if cursor:
-            cursor.close()          
 
 async def run_scrapers():
     logger = logging.getLogger(__name__)
@@ -484,16 +458,16 @@ async def run_scrapers():
     }
     
     page_config = {
-        # "Bina.az": 4,
-        # "Tap.az": 4,        
-        # "Emlak.az": 4,      
-        # "Lalafo.az": 4,     
-        # "EV10.az": 1,       
+        "Bina.az": 4,
+        "Tap.az": 4,        
+        "Emlak.az": 4,      
+        "Lalafo.az": 4,     
+        "EV10.az": 1,       
         "Unvan.az": 1,       
-        # "Arenda.az": 1,      
-        # "YeniEmlak.az": 1,   
-        # "Ipoteka.az": 1,     
-        # "VipEmlak.az": 1     
+        "Arenda.az": 1,      
+        "YeniEmlak.az": 1,   
+        "Ipoteka.az": 1,     
+        "VipEmlak.az": 1     
     }
     
     all_results = []
@@ -505,16 +479,16 @@ async def run_scrapers():
             return []
             
         scrapers = [
-            # ("Arenda.az", OptimizedArendaScraper()),
-            # ("EV10.az", EV10Scraper()),
-            # ("YeniEmlak.az", YeniEmlakScraper()),
-            # ("Emlak.az", EmlakAzScraper()),
-            # ("Bina.az", BinaScraper()),
-            # ("Ipoteka.az", IpotekaScraper()),
+            ("Arenda.az", OptimizedArendaScraper()),
+            ("EV10.az", EV10Scraper()),
+            ("YeniEmlak.az", YeniEmlakScraper()),
+            ("Emlak.az", EmlakAzScraper()),
+            ("Bina.az", BinaScraper()),
+            ("Ipoteka.az", IpotekaScraper()),
             ("Unvan.az", UnvanScraper()),
-            # ("VipEmlak.az", VipEmlakScraper()),
-            # ("Lalafo.az", LalafoScraper()),
-            # ("Tap.az", TapAzScraper())
+            ("VipEmlak.az", VipEmlakScraper()),
+            ("Lalafo.az", LalafoScraper()),
+            ("Tap.az", TapAzScraper())
         ]
         
         for name, scraper in scrapers:
@@ -563,10 +537,8 @@ async def main():
     logger = setup_logging()
     logger.info("Starting scraper application")
     connection = None
-    reporter = TelegramReporter()
     
     try:
-        # Initialize database connection
         try:
             connection = get_db_connection()
             logger.info("Database connection established")
@@ -574,29 +546,15 @@ async def main():
             logger.error(f"Database connection failed: {err}")
             logger.info("Continuing to test scraping")
         
-        # Run scrapers and get results + statistics
-        results, scraping_stats = await run_scrapers()
+        results = await run_scrapers()
         logger.info(f"All scrapers completed. Total listings: {len(results)}")
         
-        # Save to database and get database statistics
         if connection and results:
-            try:
-                db_stats = save_listings_to_db(connection, results)
-                # Merge scraping and database statistics
-                scraping_stats.update(db_stats)
-                logger.info("Data saved to database")
-            except Exception as e:
-                logger.error(f"Error saving to database: {e}")
+            save_listings_to_db(connection, results)
+            logger.info("Data saved to database")
         elif results:
             logger.info(f"Scraped {len(results)} listings")
             logger.debug("Sample: %s", results[0])
-        
-        # Send report
-        try:
-            await reporter.send_report(scraping_stats)
-            logger.info("Telegram report sent successfully")
-        except Exception as e:
-            logger.error(f"Failed to send Telegram report: {e}")
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
@@ -605,76 +563,6 @@ async def main():
         if connection:
             connection.close()
         logger.info("Application shutting down")
-
-async def run_scrapers():
-    """Run all scrapers and collect performance statistics"""
-    logger = logging.getLogger(__name__)
-    start_time = time.time()
-    
-    stats = {
-        'success_count': defaultdict(int),
-        'error_count': defaultdict(int),
-        'error_details': defaultdict(lambda: defaultdict(int)),
-        'duration': 0,
-        'avg_time_per_listing': 0
-    }
-    
-    all_results = []
-    
-    try:
-        proxy_manager = BrightDataProxy()
-        if not await proxy_manager.verify_proxy():
-            logger.error("Failed to verify Bright Data proxy connection")
-            return [], stats
-            
-        scrapers = [
-            # ("Bina.az", BinaScraper()),
-            # ("YeniEmlak.az", YeniEmlakScraper()),
-            # ("Emlak.az", EmlakAzScraper()),
-            # ("Ipoteka.az", IpotekaScraper()),
-            ("Unvan.az", UnvanScraper()),
-            # ("VipEmlak.az", VipEmlakScraper()),
-            # ("Tap.az", TapAzScraper()),
-            # ("Lalafo.az", LalafoScraper()),
-            # ("EV10.az", EV10Scraper()),
-            # ("Arenda.az", OptimizedArendaScraper())
-        ]
-        
-        
-        for name, scraper in scrapers:
-            try:
-                scraper_start = time.time()
-                logger.info(f"Starting {name} scraper")
-                
-                proxy_manager.apply_to_scraper(scraper)
-                results = await scraper.run(pages=int(os.getenv('SCRAPER_PAGES', 2)))
-                
-                if results:
-                    stats['success_count'][name] = len(results)
-                    all_results.extend(results)
-                
-                scraper_duration = time.time() - scraper_start
-                logger.info(f"{name} completed in {scraper_duration:.2f}s")
-                
-            except Exception as e:
-                stats['error_count'][name] += 1
-                error_type = type(e).__name__
-                stats['error_details'][name][error_type] += 1
-                logger.error(f"Error in {name}: {str(e)}", exc_info=True)
-            
-            await asyncio.sleep(random.uniform(2, 5))
-    
-    except Exception as e:
-        logger.error(f"Fatal error: {str(e)}", exc_info=True)
-    
-    finally:
-        total_duration = time.time() - start_time
-        total_listings = len(all_results)
-        
-        stats['duration'] = total_duration
-        stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
-        
-        return all_results, stats
 
 if __name__ == "__main__":
     asyncio.run(main())
