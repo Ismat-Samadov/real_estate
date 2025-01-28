@@ -458,15 +458,15 @@ async def run_scrapers():
     }
     
     page_config = {
-        "Bina.az": 4,
-        "Tap.az": 4,        
-        "Emlak.az": 4,      
-        "Lalafo.az": 4,     
-        "EV10.az": 1,       
-        "Unvan.az": 1,       
-        "Arenda.az": 1,      
-        "YeniEmlak.az": 1,   
-        "Ipoteka.az": 1,     
+        # "Bina.az": 4,
+        # "Tap.az": 4,        
+        # "Emlak.az": 4,      
+        # "Lalafo.az": 4,     
+        # "EV10.az": 1,       
+        # "Unvan.az": 1,       
+        # "Arenda.az": 1,      
+        # "YeniEmlak.az": 1,   
+        # "Ipoteka.az": 1,     
         "VipEmlak.az": 1     
     }
     
