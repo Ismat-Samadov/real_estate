@@ -335,7 +335,7 @@ def validate_listing_data(listing: Dict) -> Dict:
         validated['updated_at'] = now
 
     return validated
-   
+
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
     """Save listings to database with enhanced statistics tracking"""
     logger = logging.getLogger(__name__)
@@ -350,6 +350,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
             'count': 0
         }
     }
+    cursor = None
     
     try:
         connection = ensure_connection(connection)
@@ -445,6 +446,9 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
                 # Commit every 50 operations
                 if (stats['new_listings'] + stats['updated_listings']) % 50 == 0:
                     connection.commit()
+            except Exception as e:
+                logger.error(f"Error processing listing {sanitized.get('listing_id')}: {str(e)}")
+                continue
                     
         # Final commit
         connection.commit()
@@ -464,9 +468,8 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
         logger.error(f"Database error: {str(e)}")
         raise
     finally:
-        if 'cursor' in locals():
-            cursor.close()
-            
+        if cursor:
+            cursor.close()          
 
 async def run_scrapers():
     logger = logging.getLogger(__name__)
