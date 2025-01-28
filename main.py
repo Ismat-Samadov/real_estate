@@ -480,9 +480,9 @@ async def run_scrapers():
         # "Tap.az": 4,        
         # "Emlak.az": 4,      
         # "Lalafo.az": 4,     
-        "EV10.az": 1,       
+        # "EV10.az": 1,       
         # "Unvan.az": 1,       
-        # "Arenda.az": 1,      
+        "Arenda.az": 1,      
         # "YeniEmlak.az": 1,   
         # "Ipoteka.az": 1,     
         # "VipEmlak.az": 1     
@@ -497,8 +497,8 @@ async def run_scrapers():
             return []
             
         scrapers = [
-            # ("Arenda.az", OptimizedArendaScraper()),
-            ("EV10.az", EV10Scraper()),
+            ("Arenda.az", OptimizedArendaScraper()),
+            # ("EV10.az", EV10Scraper()),
             # ("YeniEmlak.az", YeniEmlakScraper()),
             # ("Emlak.az", EmlakAzScraper()),
             # ("Bina.az", BinaScraper()),
@@ -620,13 +620,16 @@ async def run_scrapers():
             return [], stats
             
         scrapers = [
-            ("Bina.az", BinaScraper()),
-            ("YeniEmlak.az", YeniEmlakScraper()),
-            ("Emlak.az", EmlakAzScraper()),
-            ("Ipoteka.az", IpotekaScraper()),
-            ("Unvan.az", UnvanScraper()),
-            ("VipEmlak.az", VipEmlakScraper()),
-            ("Tap.az", TapAzScraper())
+            # ("Bina.az", BinaScraper()),
+            # ("YeniEmlak.az", YeniEmlakScraper()),
+            # ("Emlak.az", EmlakAzScraper()),
+            # ("Ipoteka.az", IpotekaScraper()),
+            # ("Unvan.az", UnvanScraper()),
+            # ("VipEmlak.az", VipEmlakScraper()),
+            # ("Tap.az", TapAzScraper()),
+            # ("Lalafo.az", LalafoScraper()),
+            # ("EV10.az", EV10Scraper()),
+            ("Arenda.az", OptimizedArendaScraper())
         ]
         
         for name, scraper in scrapers:
