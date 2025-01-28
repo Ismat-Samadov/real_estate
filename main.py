@@ -606,7 +606,7 @@ async def main():
         # Send report with both scraper and database stats
         try:
             reporter = TelegramReporter()
-            await reporter.send_report(scraper_stats, db_stats)
+            await reporter.send_report(scraper_stats, db_stats, results)  # Pass results here
             logger.info("Telegram report sent successfully")
         except Exception as e:
             logger.error(f"Failed to send Telegram report: {str(e)}")
