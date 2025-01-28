@@ -517,7 +517,7 @@ async def run_scrapers():
         proxy_manager = BrightDataProxy()
         if not await proxy_manager.verify_proxy():
             logger.error("Failed to verify Bright Data proxy connection")
-            return []
+            return [], stats
             
         scrapers = [
             # ("Arenda.az", OptimizedArendaScraper()),
@@ -557,6 +557,7 @@ async def run_scrapers():
     
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
+        return [], stats
     
     finally:
         total_duration = time.time() - start_time
@@ -565,13 +566,7 @@ async def run_scrapers():
         stats['duration'] = total_duration
         stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
         
-        try:
-            reporter = TelegramReporter()
-            await reporter.send_report(stats)
-        except Exception as e:
-            logger.error(f"Failed to send Telegram report: {str(e)}")
-        
-        return all_results
+        return all_results, stats
 
 async def main():
     """Main async function to run scrapers"""
@@ -587,15 +582,34 @@ async def main():
             logger.error(f"Database connection failed: {err}")
             logger.info("Continuing to test scraping")
         
-        results = await run_scrapers()
+        # Get both results and stats from run_scrapers
+        results, scraper_stats = await run_scrapers()
         logger.info(f"All scrapers completed. Total listings: {len(results)}")
         
+        # Initialize db_stats with zeros in case database operations fail
+        db_stats = {
+            'successful_inserts': 0,
+            'successful_updates': 0,
+            'failed': 0,
+            'error_details': defaultdict(int),
+            'updated_fields': defaultdict(int)
+        }
+        
         if connection and results:
-            save_listings_to_db(connection, results)
+            # Get database stats from save operation
+            db_stats = save_listings_to_db(connection, results)
             logger.info("Data saved to database")
         elif results:
             logger.info(f"Scraped {len(results)} listings")
             logger.debug("Sample: %s", results[0])
+        
+        # Send report with both scraper and database stats
+        try:
+            reporter = TelegramReporter()
+            await reporter.send_report(scraper_stats, db_stats)
+            logger.info("Telegram report sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send Telegram report: {str(e)}")
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
