@@ -336,16 +336,27 @@ def validate_listing_data(listing: Dict) -> Dict:
 
     return validated
 
-def save_listings_to_db(connection, listings: List[Dict]) -> None:
-    """Save listings to database with enhanced data validation and error handling"""
+def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
+    """Save listings to database with composite key check for listing_id and source_website"""
     logger = logging.getLogger(__name__)
-    successful = 0
-    failed = 0
+    stats = {
+        'successful_inserts': 0,
+        'successful_updates': 0,
+        'failed': 0,
+        'error_details': defaultdict(int),
+        'updated_fields': defaultdict(int)
+    }
     
     try:
-        # Ensure connection is alive
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
+        
+        # Check query now includes source_website
+        check_query = """
+            SELECT listing_id, price, title, description, views_count 
+            FROM properties 
+            WHERE listing_id = %s AND source_website = %s
+        """
         
         insert_query = """
             INSERT INTO properties (
@@ -362,28 +373,40 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
             )
             ON DUPLICATE KEY UPDATE
                 updated_at = VALUES(updated_at),
-                price = VALUES(price),
-                title = VALUES(title),
-                description = VALUES(description),
-                views_count = VALUES(views_count)
+                price = CASE 
+                    WHEN price != VALUES(price) THEN VALUES(price)
+                    ELSE price
+                END,
+                title = CASE 
+                    WHEN title != VALUES(title) THEN VALUES(title)
+                    ELSE title
+                END,
+                description = CASE 
+                    WHEN description != VALUES(description) THEN VALUES(description)
+                    ELSE description
+                END,
+                views_count = CASE 
+                    WHEN views_count != VALUES(views_count) THEN VALUES(views_count)
+                    ELSE views_count
+                END
         """
         
         for listing in listings:
             try:
-                # Validate and clean data
                 sanitized = validate_listing_data(listing)
                 
-                if not sanitized:
-                    logger.warning("Empty listing data after validation, skipping")
-                    failed += 1
+                if not sanitized or not sanitized.get('listing_id') or not sanitized.get('source_website'):
+                    stats['failed'] += 1
+                    stats['error_details']['invalid_data'] += 1
                     continue
                 
-                if not sanitized.get('listing_id'):
-                    logger.warning("Missing listing_id, skipping")
-                    failed += 1
-                    continue
+                # Check if record exists using both listing_id and source_website
+                cursor.execute(check_query, (
+                    sanitized['listing_id'],
+                    sanitized['source_website']
+                ))
+                existing_record = cursor.fetchone()
                 
-                # Prepare values in the correct order
                 values = (
                     sanitized.get('listing_id'),
                     sanitized.get('title'),
@@ -416,35 +439,53 @@ def save_listings_to_db(connection, listings: List[Dict]) -> None:
                     sanitized.get('listing_date')
                 )
                 
-                # Execute with proper type handling
                 cursor.execute(insert_query, values)
-                successful += 1
                 
-                # Commit every 50 successful insertions
-                if successful % 50 == 0:
+                if existing_record:
+                    stats['successful_updates'] += 1
+                    # Track which fields were updated
+                    if existing_record[1] != sanitized.get('price'):
+                        stats['updated_fields']['price'] += 1
+                    if existing_record[2] != sanitized.get('title'):
+                        stats['updated_fields']['title'] += 1
+                    if existing_record[3] != sanitized.get('description'):
+                        stats['updated_fields']['description'] += 1
+                    if existing_record[4] != sanitized.get('views_count'):
+                        stats['updated_fields']['views_count'] += 1
+                else:
+                    stats['successful_inserts'] += 1
+                
+                # Commit every 50 operations
+                if (stats['successful_inserts'] + stats['successful_updates']) % 50 == 0:
                     connection.commit()
-                    logger.debug(f"Committed batch of 50 listings. Total successful: {successful}")
-                    
+                    logger.debug(f"Committed batch. Inserts: {stats['successful_inserts']}, Updates: {stats['successful_updates']}")
+                
             except Exception as e:
-                failed += 1
-                logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
+                stats['failed'] += 1
+                error_type = type(e).__name__
+                stats['error_details'][error_type] += 1
+                logger.error(f"Error saving listing {listing.get('listing_id')} from {listing.get('source_website')}: {str(e)}")
                 continue
         
-        # Final commit for any remaining listings
+        # Final commit
         connection.commit()
-        
-        # Close cursor
         cursor.close()
         
-        # Log results
-        logger.info(f"Successfully saved {successful} listings")
-        if failed > 0:
-            logger.warning(f"Failed to save {failed} listings")
-            
+        # Log statistics
+        logger.info(f"Database operation completed:")
+        logger.info(f"New insertions: {stats['successful_inserts']}")
+        logger.info(f"Updated records: {stats['successful_updates']}")
+        logger.info(f"Failed operations: {stats['failed']}")
+        logger.info("Updated fields frequency:")
+        for field, count in stats['updated_fields'].items():
+            logger.info(f"- {field}: {count}")
+        
+        return stats
+        
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-
+    
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()

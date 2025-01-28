@@ -60,3 +60,7 @@ CREATE TABLE properties (
     INDEX idx_created_at (created_at),
     INDEX idx_listing_date (listing_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE properties
+    DROP INDEX listing_id,
+    ADD UNIQUE KEY unique_listing (listing_id, source_website);
