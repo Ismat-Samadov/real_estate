@@ -1,3 +1,14 @@
+import os
+import asyncio
+import pandas as pd
+import tempfile
+from telegram import Bot, InputFile
+import aiofiles
+from typing import Dict, List, Union
+from collections import defaultdict
+import logging
+from datetime import datetime
+
 class TelegramReporter:
     def __init__(self):
         self.token = os.getenv('TELEGRAM_BOT_TOKEN')
