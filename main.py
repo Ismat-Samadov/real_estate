@@ -336,6 +336,138 @@ def validate_listing_data(listing: Dict) -> Dict:
 
     return validated
    
+def save_listings_to_db(connection, listings: List[Dict]) -> Dict[str, Dict]:
+    """Save listings to database with enhanced statistics tracking"""
+    logger = logging.getLogger(__name__)
+    stats = {
+        'new_listings': 0,
+        'updated_listings': 0,
+        'site_stats': defaultdict(lambda: {'new': 0, 'updated': 0}),
+        'price_stats': {
+            'min': float('inf'),
+            'max': 0,
+            'sum': 0,
+            'count': 0
+        }
+    }
+    
+    try:
+        connection = ensure_connection(connection)
+        cursor = connection.cursor(prepared=True)
+        
+        # First, get existing listing IDs
+        existing_listings = set()
+        cursor.execute("SELECT listing_id FROM properties")
+        for (listing_id,) in cursor:
+            existing_listings.add(listing_id)
+        
+        insert_query = """
+            INSERT INTO properties (
+                listing_id, title, description, metro_station, district,
+                address, location, latitude, longitude, rooms, area, 
+                floor, total_floors, property_type, listing_type, price, 
+                currency, contact_type, contact_phone, whatsapp_available,
+                views_count, has_repair, amenities, photos,
+                source_url, source_website, created_at, updated_at, 
+                listing_date
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+            ON DUPLICATE KEY UPDATE
+                updated_at = VALUES(updated_at),
+                price = VALUES(price),
+                title = VALUES(title),
+                description = VALUES(description),
+                views_count = VALUES(views_count)
+        """
+        
+        for listing in listings:
+            try:
+                sanitized = validate_listing_data(listing)
+                if not sanitized or not sanitized.get('listing_id'):
+                    continue
+                
+                # Track price statistics
+                if 'price' in sanitized and sanitized['price']:
+                    price = float(sanitized['price'])
+                    if price > 0:  # Only track valid prices
+                        stats['price_stats']['min'] = min(stats['price_stats']['min'], price)
+                        stats['price_stats']['max'] = max(stats['price_stats']['max'], price)
+                        stats['price_stats']['sum'] += price
+                        stats['price_stats']['count'] += 1
+                
+                # Prepare values for insertion
+                values = (
+                    sanitized.get('listing_id'),
+                    sanitized.get('title'),
+                    sanitized.get('description'),
+                    sanitized.get('metro_station'),
+                    sanitized.get('district'),
+                    sanitized.get('address'),
+                    sanitized.get('location'),
+                    sanitized.get('latitude'),
+                    sanitized.get('longitude'),
+                    sanitized.get('rooms'),
+                    sanitized.get('area'),
+                    sanitized.get('floor'),
+                    sanitized.get('total_floors'),
+                    sanitized.get('property_type'),
+                    sanitized.get('listing_type'),
+                    sanitized.get('price'),
+                    sanitized.get('currency'),
+                    sanitized.get('contact_type'),
+                    sanitized.get('contact_phone'),
+                    sanitized.get('whatsapp_available', False),
+                    sanitized.get('views_count', 0),
+                    sanitized.get('has_repair', False),
+                    sanitized.get('amenities'),
+                    sanitized.get('photos'),
+                    sanitized.get('source_url'),
+                    sanitized.get('source_website'),
+                    sanitized.get('created_at', datetime.datetime.now()),
+                    sanitized.get('updated_at', datetime.datetime.now()),
+                    sanitized.get('listing_date')
+                )
+                
+                # Execute insert/update
+                cursor.execute(insert_query, values)
+                
+                # Track statistics
+                website = sanitized.get('source_website', 'unknown')
+                if sanitized['listing_id'] in existing_listings:
+                    stats['updated_listings'] += 1
+                    stats['site_stats'][website]['updated'] += 1
+                else:
+                    stats['new_listings'] += 1
+                    stats['site_stats'][website]['new'] += 1
+                
+                # Commit every 50 operations
+                if (stats['new_listings'] + stats['updated_listings']) % 50 == 0:
+                    connection.commit()
+                    
+        # Final commit
+        connection.commit()
+        
+        # Calculate average price
+        if stats['price_stats']['count'] > 0:
+            stats['price_stats']['avg'] = stats['price_stats']['sum'] / stats['price_stats']['count']
+        del stats['price_stats']['sum']  # Remove sum from final stats
+        
+        # Log results
+        logger.info(f"New listings: {stats['new_listings']}")
+        logger.info(f"Updated listings: {stats['updated_listings']}")
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Database error: {str(e)}")
+        raise
+    finally:
+        if 'cursor' in locals():
+            cursor.close()
+            
+
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()
