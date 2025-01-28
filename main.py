@@ -489,8 +489,8 @@ async def run_scrapers():
         # "Unvan.az": 1,       
         # "Arenda.az": 1,      
         # "YeniEmlak.az": 1,   
-        "Ipoteka.az": 1,     
-        # "VipEmlak.az": 1     
+        # "Ipoteka.az": 1,     
+        "VipEmlak.az": 1     
     }
     
     all_results = []
@@ -507,9 +507,9 @@ async def run_scrapers():
             # ("YeniEmlak.az", YeniEmlakScraper()),
             # ("Emlak.az", EmlakAzScraper()),
             # ("Bina.az", BinaScraper()),
-            ("Ipoteka.az", IpotekaScraper()),
+            # ("Ipoteka.az", IpotekaScraper()),
             # ("Unvan.az", UnvanScraper()),
-            # ("VipEmlak.az", VipEmlakScraper()),
+            ("VipEmlak.az", VipEmlakScraper()),
             # ("Lalafo.az", LalafoScraper()),
             # ("Tap.az", TapAzScraper())
         ]
@@ -628,9 +628,9 @@ async def run_scrapers():
             # ("Bina.az", BinaScraper()),
             # ("YeniEmlak.az", YeniEmlakScraper()),
             # ("Emlak.az", EmlakAzScraper()),
-            ("Ipoteka.az", IpotekaScraper()),
+            # ("Ipoteka.az", IpotekaScraper()),
             # ("Unvan.az", UnvanScraper()),
-            # ("VipEmlak.az", VipEmlakScraper()),
+            ("VipEmlak.az", VipEmlakScraper()),
             # ("Tap.az", TapAzScraper()),
             # ("Lalafo.az", LalafoScraper()),
             # ("EV10.az", EV10Scraper()),
