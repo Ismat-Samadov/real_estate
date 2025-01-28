@@ -555,8 +555,10 @@ async def main():
     logger = setup_logging()
     logger.info("Starting scraper application")
     connection = None
+    reporter = TelegramReporter()
     
     try:
+        # Initialize database connection
         try:
             connection = get_db_connection()
             logger.info("Database connection established")
@@ -564,15 +566,29 @@ async def main():
             logger.error(f"Database connection failed: {err}")
             logger.info("Continuing to test scraping")
         
-        results = await run_scrapers()
+        # Run scrapers and get results + statistics
+        results, scraping_stats = await run_scrapers()
         logger.info(f"All scrapers completed. Total listings: {len(results)}")
         
+        # Save to database and get database statistics
         if connection and results:
-            save_listings_to_db(connection, results)
-            logger.info("Data saved to database")
+            try:
+                db_stats = save_listings_to_db(connection, results)
+                # Merge scraping and database statistics
+                scraping_stats.update(db_stats)
+                logger.info("Data saved to database")
+            except Exception as e:
+                logger.error(f"Error saving to database: {e}")
         elif results:
             logger.info(f"Scraped {len(results)} listings")
             logger.debug("Sample: %s", results[0])
+        
+        # Send report
+        try:
+            await reporter.send_report(scraping_stats)
+            logger.info("Telegram report sent successfully")
+        except Exception as e:
+            logger.error(f"Failed to send Telegram report: {e}")
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
@@ -581,6 +597,72 @@ async def main():
         if connection:
             connection.close()
         logger.info("Application shutting down")
+
+async def run_scrapers():
+    """Run all scrapers and collect performance statistics"""
+    logger = logging.getLogger(__name__)
+    start_time = time.time()
+    
+    stats = {
+        'success_count': defaultdict(int),
+        'error_count': defaultdict(int),
+        'error_details': defaultdict(lambda: defaultdict(int)),
+        'duration': 0,
+        'avg_time_per_listing': 0
+    }
+    
+    all_results = []
+    
+    try:
+        proxy_manager = BrightDataProxy()
+        if not await proxy_manager.verify_proxy():
+            logger.error("Failed to verify Bright Data proxy connection")
+            return [], stats
+            
+        scrapers = [
+            ("Bina.az", BinaScraper()),
+            ("YeniEmlak.az", YeniEmlakScraper()),
+            ("Emlak.az", EmlakAzScraper()),
+            ("Ipoteka.az", IpotekaScraper()),
+            ("Unvan.az", UnvanScraper()),
+            ("VipEmlak.az", VipEmlakScraper()),
+            ("Tap.az", TapAzScraper())
+        ]
+        
+        for name, scraper in scrapers:
+            try:
+                scraper_start = time.time()
+                logger.info(f"Starting {name} scraper")
+                
+                proxy_manager.apply_to_scraper(scraper)
+                results = await scraper.run(pages=int(os.getenv('SCRAPER_PAGES', 2)))
+                
+                if results:
+                    stats['success_count'][name] = len(results)
+                    all_results.extend(results)
+                
+                scraper_duration = time.time() - scraper_start
+                logger.info(f"{name} completed in {scraper_duration:.2f}s")
+                
+            except Exception as e:
+                stats['error_count'][name] += 1
+                error_type = type(e).__name__
+                stats['error_details'][name][error_type] += 1
+                logger.error(f"Error in {name}: {str(e)}", exc_info=True)
+            
+            await asyncio.sleep(random.uniform(2, 5))
+    
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
+    
+    finally:
+        total_duration = time.time() - start_time
+        total_listings = len(all_results)
+        
+        stats['duration'] = total_duration
+        stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
+        
+        return all_results, stats
 
 if __name__ == "__main__":
     asyncio.run(main())
