@@ -196,7 +196,8 @@ The scraper can be configured to run automatically using crontab. Add the follow
 
 ```bash
 # Add scraper to crontab (runs every 2 hours)
-(crontab -l 2>/dev/null || true; echo "0 */2 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1") | crontab -
+(crontab -l 2>/dev/null || true; echo "0 5,7,9,11,13,15,17,19 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1") | crontab -
+
 
 # Set required environment variables
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
