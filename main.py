@@ -337,21 +337,29 @@ def validate_listing_data(listing: Dict) -> Dict:
     return validated
 
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
-    """Save listings to database with composite key check for listing_id and source_website"""
+    """Save listings to database with enhanced tracking of changes"""
     logger = logging.getLogger(__name__)
     stats = {
         'successful_inserts': 0,
         'successful_updates': 0,
         'failed': 0,
         'error_details': defaultdict(int),
-        'updated_fields': defaultdict(int)
+        'updated_fields': defaultdict(lambda: set()),  # Track listing_ids per field
+        'new_listings': set(),  # Track new listing_ids
+        'updated_listings': set(),  # Track updated listing_ids
+        'website_stats': defaultdict(lambda: {
+            'new': 0,
+            'updated': 0,
+            'failed': 0,
+            'updated_fields': defaultdict(int)
+        })
     }
     
     try:
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
         
-        # Check query now includes source_website
+        # Check query includes source_website
         check_query = """
             SELECT listing_id, price, title, description, views_count 
             FROM properties 
@@ -400,15 +408,15 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     stats['error_details']['invalid_data'] += 1
                     continue
                 
+                listing_id = sanitized['listing_id']
+                website = sanitized['source_website']
+                
                 # Check if record exists using both listing_id and source_website
-                cursor.execute(check_query, (
-                    sanitized['listing_id'],
-                    sanitized['source_website']
-                ))
+                cursor.execute(check_query, (listing_id, website))
                 existing_record = cursor.fetchone()
                 
                 values = (
-                    sanitized.get('listing_id'),
+                    listing_id,
                     sanitized.get('title'),
                     sanitized.get('description'),
                     sanitized.get('metro_station'),
@@ -433,7 +441,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     sanitized.get('amenities'),
                     sanitized.get('photos'),
                     sanitized.get('source_url'),
-                    sanitized.get('source_website'),
+                    website,
                     sanitized.get('created_at', datetime.datetime.now()),
                     sanitized.get('updated_at', datetime.datetime.now()),
                     sanitized.get('listing_date')
@@ -442,20 +450,33 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 cursor.execute(insert_query, values)
                 
                 if existing_record:
+                    # Track overall updates
                     stats['successful_updates'] += 1
+                    stats['updated_listings'].add(listing_id)
+                    
+                    # Track website-specific updates
+                    stats['website_stats'][website]['updated'] += 1
+                    
                     # Track which fields were updated
-                    if existing_record[1] != sanitized.get('price'):
-                        stats['updated_fields']['price'] += 1
-                    if existing_record[2] != sanitized.get('title'):
-                        stats['updated_fields']['title'] += 1
-                    if existing_record[3] != sanitized.get('description'):
-                        stats['updated_fields']['description'] += 1
-                    if existing_record[4] != sanitized.get('views_count'):
-                        stats['updated_fields']['views_count'] += 1
+                    fields_to_check = {
+                        'price': (1, sanitized.get('price')),
+                        'title': (2, sanitized.get('title')),
+                        'description': (3, sanitized.get('description')),
+                        'views_count': (4, sanitized.get('views_count'))
+                    }
+                    
+                    for field, (idx, new_value) in fields_to_check.items():
+                        if existing_record[idx] != new_value:
+                            stats['updated_fields'][field].add(listing_id)
+                            stats['website_stats'][website]['updated_fields'][field] += 1
                 else:
+                    # Track overall inserts
                     stats['successful_inserts'] += 1
+                    stats['new_listings'].add(listing_id)
+                    
+                    # Track website-specific inserts
+                    stats['website_stats'][website]['new'] += 1
                 
-                # Commit every 50 operations
                 if (stats['successful_inserts'] + stats['successful_updates']) % 50 == 0:
                     connection.commit()
                     logger.debug(f"Committed batch. Inserts: {stats['successful_inserts']}, Updates: {stats['successful_updates']}")
@@ -464,15 +485,19 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 stats['failed'] += 1
                 error_type = type(e).__name__
                 stats['error_details'][error_type] += 1
-                logger.error(f"Error saving listing {listing.get('listing_id')} from {listing.get('source_website')}: {str(e)}")
+                stats['website_stats'][website]['failed'] += 1
+                logger.error(f"Error saving listing {listing.get('listing_id')} from {website}: {str(e)}")
                 continue
         
         # Final commit
         connection.commit()
         cursor.close()
         
+        # Convert updated_fields sets to counts for the report
+        stats['updated_fields'] = {k: len(v) for k, v in stats['updated_fields'].items()}
+        
         # Log statistics
-        logger.info(f"Database operation completed:")
+        logger.info("Database operation completed:")
         logger.info(f"New insertions: {stats['successful_inserts']}")
         logger.info(f"Updated records: {stats['successful_updates']}")
         logger.info(f"Failed operations: {stats['failed']}")
@@ -480,11 +505,22 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         for field, count in stats['updated_fields'].items():
             logger.info(f"- {field}: {count}")
         
+        # Log website-specific stats
+        for website, website_stats in stats['website_stats'].items():
+            logger.info(f"\nStats for {website}:")
+            logger.info(f"New listings: {website_stats['new']}")
+            logger.info(f"Updated listings: {website_stats['updated']}")
+            logger.info(f"Failed operations: {website_stats['failed']}")
+            logger.info("Field updates:")
+            for field, count in website_stats['updated_fields'].items():
+                logger.info(f"- {field}: {count}")
+        
         return stats
         
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
+    
     
 async def run_scrapers():
     logger = logging.getLogger(__name__)
@@ -606,7 +642,7 @@ async def main():
         # Send report with both scraper and database stats
         try:
             reporter = TelegramReporter()
-            await reporter.send_report(scraper_stats, db_stats, results)  # Pass results here
+            await reporter.send_report(scraper_stats, db_stats, results)
             logger.info("Telegram report sent successfully")
         except Exception as e:
             logger.error(f"Failed to send Telegram report: {str(e)}")
