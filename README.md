@@ -1,468 +1,400 @@
-# 🏢 Azerbaijan Real Estate Data Scraper
+# 🏢 Enterprise Real Estate Data Collection System
 
-An enterprise-grade, asynchronous web scraping system for collecting and analyzing real estate listings from major Azerbaijani property websites. Built with modern Python async capabilities and designed for reliability, scalability, and maintainability.
+A high-performance, distributed web scraping infrastructure designed for collecting and processing real estate data from Azerbaijan's property market. Built with advanced asynchronous architecture, sophisticated proxy management, and enterprise-grade error handling.
 
 [![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](https://choosealicense.com/licenses/mit/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://github.com/Ismat-Samadov/real_estate/graphs/commit-activity)
+[![aiohttp](https://img.shields.io/badge/aiohttp-3.11.11-blue.svg)](https://docs.aiohttp.org/)
+[![MySQL 8.0+](https://img.shields.io/badge/MySQL-8.0+-orange.svg)](https://www.mysql.com/)
 
-## 📋 Table of Contents
+## System Architecture
 
-- [Overview](#-overview)
-- [Features](#-features)
-- [System Architecture](#-system-architecture)
-- [Supported Websites](#-supported-websites)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Deployment](#-deployment)
-- [Monitoring](#-monitoring)
-- [Contributing](#-contributing)
-- [License](#-license)
-
-## 🎯 Overview
-
-This system autonomously collects comprehensive real estate data from Azerbaijan's leading property websites, providing a unified dataset for analysis and insights. The scraper handles various property types, including:
-
-- 🏢 Apartments and Flats
-- 🏘️ Houses and Villas
-- 🏬 Commercial Properties
-- 🏗️ New Developments
-- 🏡 Rental Properties
-
-### Collected Data Points
-
-| Category | Data Points |
-|----------|------------|
-| Basic Info | Price, Rooms, Floor, Area, Property Type |
-| Location | Address, District, Metro Station, GPS Coordinates |
-| Features | Renovation Status, Amenities, Building Type |
-| Media | Photos, Descriptions, Virtual Tours |
-| Contact | Phone Numbers, Agent/Owner Status |
-| Metadata | Listing Date, View Count, Update History |
-
-## 🚀 Features
-
-### Core Capabilities
-
-- **High Performance**
-  - Asynchronous multi-site scraping
-  - Connection pooling
-  - Efficient resource utilization
-  - Smart rate limiting
-
-- **Reliability**
-  - Automatic retry mechanisms
-  - Error recovery
-  - Data validation
-  - Transaction management
-
-- **Monitoring**
-  - Real-time Telegram notifications
-  - Detailed logging
-  - Performance metrics
-  - Error tracking
-
-### Technical Features
-
-- **Data Collection**
-  - Proxy rotation system
-  - Anti-bot detection measures
-  - Session management
-  - Concurrent processing
-
-- **Data Processing**
-  - Advanced text extraction
-  - Image URL processing
-  - Location normalization
-  - Price standardization
-
-- **Storage**
-  - MySQL optimization
-  - Data deduplication
-  - Schema validation
-  - Backup system
-
-## 🏗 System Architecture
+### Data Flow Overview
 
 ```mermaid
 graph TD
     A[Scraper Manager] --> B[Rate Limiter]
-    B --> C[Proxy Manager]
-    C --> D[Site Scrapers]
+    B --> C[BrightData Proxy]
+    C --> D[Site-Specific Scrapers]
     D --> E[Data Processor]
-    E --> F[Validator]
-    F --> G[Database]
-    A --> H[Telegram Reporter]
-    A --> I[Logger]
+    E --> F[Validation Layer]
+    F --> G[MySQL Storage]
+    H[Error Handler] --> I[Telegram Reporter]
+    J[Monitoring System] --> K[Health Checks]
 ```
 
-## 🌐 Supported Websites
+### Core Components
 
-| Website | Status | Features | Update Frequency |
-|---------|--------|-----------|-----------------|
-| [bina.az](https://bina.az) | ✅ | Full data, Photos, Contact | 2h |
-| [yeniemlak.az](https://yeniemlak.az) | ✅ | Full data, Location | 2h |
-| [emlak.az](https://emlak.az) | ✅ | Full data, Contact | 2h |
-| [lalafo.az](https://lalafo.az) | ✅ | API integration | 2h |
-| [tap.az](https://tap.az) | ✅ | Full data, Photos | 2h |
-| [ev10.az](https://ev10.az) | ✅ | Full data | 2h |
-| [arenda.az](https://arenda.az) | ✅ | Full data, Location | 2h |
-| [ipoteka.az](https://ipoteka.az) | ✅ | Full data, Mortgage | 2h |
-| [unvan.az](https://unvan.az) | ✅ | Full data | 2h |
-| [vipemlak.az](https://vipemlak.az) | ✅ | Full data | 2h |
+1. **Proxy Management System**
+   - BrightData integration with country-specific routing
+   - Automatic session management and rotation
+   - Connection pooling and retry logic
+   - Anti-detection mechanisms
 
-## 🛠 Installation
+2. **Distributed Scraping Infrastructure**
+   - Asynchronous execution with aiohttp
+   - Site-specific rate limiting
+   - Connection pooling
+   - Concurrent request optimization
 
-### Prerequisites
+3. **Error Recovery System**
+   - Multi-level retry mechanisms
+   - Exponential backoff
+   - Session recovery
+   - State preservation
 
-- Python 3.10+
-- MySQL 8.0+
-- Git
-- Virtual Environment
+## Technical Details
 
-### Step-by-Step Setup
+### Scraper Implementation
 
-1. **Clone Repository**
+Each scraper implements sophisticated data extraction:
+
+```python
+class BaseScraper:
+    async def init_session(self):
+        """Initialize aiohttp session with advanced configuration"""
+        if not self.session:
+            headers = {
+                'User-Agent': 'Mozilla/5.0...',
+                'Accept': 'text/html,application/xhtml+xml...',
+                'Accept-Language': 'az,en-US;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'max-age=0'
+            }
+            
+            self.session = aiohttp.ClientSession(
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+                connector=aiohttp.TCPConnector(
+                    ssl=False,
+                    limit=10,
+                    ttl_dns_cache=300
+                )
+            )
+```
+
+### Proxy Integration
+
+Advanced proxy management with retry logic:
+
+```python
+class BrightDataProxy:
+    def __init__(self):
+        self.proxy_host = 'brd.superproxy.io:22225'
+        self.username = f"{os.getenv('BRIGHT_DATA_USERNAME')}-country-az"
+        self.proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}"
+        
+    async def verify_proxy(self):
+        """Verify proxy connection with enhanced error handling"""
+        try:
+            session = await self.create_session()
+            async with session:
+                async with session.get(
+                    'https://geo.brdtest.com/mygeo.json',
+                    proxy=self.proxy_url,
+                    timeout=30,
+                    verify_ssl=False
+                ) as response:
+                    # Verification logic
+```
+
+### Database Schema
+
+Optimized MySQL schema with proper indexing:
+
+```sql
+CREATE TABLE properties (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    listing_id VARCHAR(50),
+    source_website VARCHAR(100),
+    UNIQUE KEY unique_listing (listing_id, source_website),
+    
+    -- Location data
+    latitude VARCHAR(100),
+    longitude VARCHAR(100),
+    district VARCHAR(100),
+    metro_station VARCHAR(100),
+    
+    -- Property details
+    property_type VARCHAR(50),
+    listing_type ENUM('daily', 'monthly', 'sale'),
+    price DECIMAL(12, 2),
+    
+    -- Indices for optimization
+    INDEX idx_location (district, metro_station),
+    INDEX idx_property (property_type, listing_type),
+    INDEX idx_price (price)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+## System Components
+
+### 1. Site-Specific Scrapers
+
+Each website has a dedicated scraper with customized parsing:
+
+| Scraper | Features | Complexity |
+|---------|----------|------------|
+| BinaScraper | Full HTML parsing, Anti-bot, Location extraction | High |
+| LalafoScraper | API integration, JSON processing | Medium |
+| TapAzScraper | Dynamic content, Phone number API | High |
+| EmlakScraper | Advanced pagination, Proxy rotation | Medium |
+
+### 2. Data Processing Pipeline
+
+```python
+async def process_listing(self, html: str, listing_id: str) -> Dict:
+    """Process listing with advanced validation"""
+    try:
+        # Extract base data
+        data = await self.extract_base_data(html)
+        
+        # Process specific fields
+        coordinates = self.extract_coordinates(html)
+        contact_info = await self.get_phone_numbers(listing_id)
+        
+        # Validate and clean data
+        return self.validate_listing_data({
+            **data,
+            **coordinates,
+            **contact_info
+        })
+    except Exception as e:
+        self.logger.error(f"Processing error: {str(e)}")
+        raise
+```
+
+### 3. Error Handling System
+
+Comprehensive error recovery:
+
+```python
+class ErrorHandler:
+    async def handle_request_error(self, url: str, attempt: int, error: Exception):
+        """Handle request errors with exponential backoff"""
+        if isinstance(error, aiohttp.ClientError):
+            await self.handle_client_error(error)
+        elif isinstance(error, asyncio.TimeoutError):
+            await self.handle_timeout(url, attempt)
+        else:
+            await self.handle_general_error(error)
+            
+        # Calculate backoff
+        delay = min(300, (2 ** attempt) + random.uniform(0, 1))
+        await asyncio.sleep(delay)
+```
+
+## Monitoring & Reporting
+
+### 1. Telegram Integration
+
+Real-time monitoring and alerts:
+
+```python
+class TelegramReporter:
+    async def send_report(self, scraper_stats: Dict, db_stats: Dict):
+        """Send comprehensive performance report"""
+        report = self.generate_report_header()
+        report += self.format_scraper_stats(scraper_stats)
+        report += self.format_database_stats(db_stats)
+        report += self.generate_performance_metrics()
+        
+        await self.bot.send_message(
+            chat_id=self.chat_id,
+            text=report,
+            parse_mode='HTML'
+        )
+```
+
+### 2. Health Checks
+
+System health monitoring:
+
+```bash
+#!/bin/bash
+# health_checker.sh
+
+# System metrics
+monitor_system() {
+    memory=$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')
+    disk=$(df -h | awk '$NF=="/"{printf "%s", $5}')
+    load=$(uptime | awk -F'load average:' '{ print $2 }')
+    
+    # Alert if thresholds exceeded
+    [ "${memory%.*}" -gt 90 ] && alert "Memory usage critical: $memory"
+    [ "${disk%.*}" -gt 90 ] && alert "Disk usage critical: $disk"
+}
+
+# Database health
+check_database() {
+    mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" \
+        -e "SELECT COUNT(*) FROM properties" > /dev/null 2>&1 || \
+        alert "Database connection failed"
+}
+
+# Process monitoring
+check_processes() {
+    pgrep -f "python main.py" > /dev/null || restart_scraper
+}
+```
+
+## Deployment
+
+### Production Setup
+
+1. **System Configuration**
    ```bash
-   git clone https://github.com/Ismat-Samadov/real_estate.git
-   cd real_estate
-   ```
-
-2. **Create Virtual Environment**
-   ```bash
-   python -m venv .venv
+   # Create service user
+   sudo useradd -r -s /bin/false scraper
    
-   # Linux/macOS
-   source .venv/bin/activate
-   
-   # Windows
-   .venv\Scripts\activate
-   ```
-
-3. **Install Dependencies**
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-4. **Database Setup**
-   ```bash
-   mysql -u your_user -p your_database < schema.sql
-   ```
-
-## ⚙️ Configuration
-
-Create a `.env` file in the project root:
-
-```env
-# Database Configuration
-DB_NAME=your_database
-DB_HOST=your_host
-DB_USER=your_user
-DB_PASSWORD=your_password
-DB_PORT=3306
-
-# Scraper Settings
-REQUEST_DELAY=1
-MAX_RETRIES=5
-LOGGING_LEVEL=INFO
-SCRAPER_PAGES=2
-
-# Proxy Configuration
-BRIGHT_DATA_USERNAME=your_username
-BRIGHT_DATA_PASSWORD=your_password
-
-# Server Settings
-SERVER_USER=your_server_user
-SERVER_IP=your_server_ip
-SUDO_PASSWORD=your_sudo_password
-
-# Telegram Integration
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
-```
-
-## 📊 Monitoring
-
-### Telegram Reports
-
-The system sends detailed reports via Telegram:
-
-```
-📊 Scraping Report 2024-01-29 15:30
-===================================
-
-🌐 bina.az:
-• Scraped: 150
-• New: 45
-• Updated: 105
-
-🌐 tap.az:
-• Scraped: 120
-• New: 35
-• Updated: 85
-
-[Additional sites...]
-
-📈 Performance Metrics:
-• Duration: 180s
-• Avg Time/Listing: 0.4s
-• Success Rate: 98.5%
-```
-
-### Logging
-
-Comprehensive logging is available in `logs/scraper.log`:
-
-```
-2024-01-29 15:30:01 INFO Starting scraper application
-2024-01-29 15:30:02 INFO Database connection established
-2024-01-29 15:30:03 INFO Starting bina.az scraper
-[...]
-```
-
-## 🚀 Deployment & Scheduling
-
-### Production Deployment
-
-1. **Server Setup**
-   ```bash
-   # Create application directory
-   sudo mkdir -p /var/www/scraper
-   sudo chown -R $USER:$USER /var/www/scraper
-   
-   # Set proper permissions
-   sudo chmod 755 /var/www/scraper
+   # Set up application directory
+   sudo mkdir -p /var/www/scraper/{logs,data}
+   sudo chown -R scraper:scraper /var/www/scraper
+   sudo chmod 750 /var/www/scraper
    ```
 
 2. **Environment Configuration**
    ```bash
-   # Create and secure environment file
-   sudo touch /var/www/scraper/.env
-   sudo chmod 600 /var/www/scraper/.env
+   # Deploy environment file
+   sudo -u scraper cat > /var/www/scraper/.env << EOF
+   DB_NAME=${DB_NAME}
+   DB_HOST=${DB_HOST}
+   DB_USER=${DB_USER}
+   DB_PASSWORD=${DB_PASSWORD}
+   DB_PORT=3306
    
-   # Set runtime variables
-   echo "PYTHONPATH=/var/www/scraper" | sudo tee -a /etc/environment
-   echo "SCRAPER_ENV=production" | sudo tee -a /etc/environment
+   REQUEST_DELAY=1
+   MAX_RETRIES=5
+   LOGGING_LEVEL=INFO
+   
+   BRIGHT_DATA_USERNAME=${BRIGHT_DATA_USERNAME}
+   BRIGHT_DATA_PASSWORD=${BRIGHT_DATA_PASSWORD}
+   
+   TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+   TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+   EOF
+   
+   sudo chmod 600 /var/www/scraper/.env
    ```
 
-3. **Service Configuration**
+3. **Process Management**
    ```bash
-   # Create systemd service
-   sudo nano /etc/systemd/system/real-estate-scraper.service
-   
+   # Deploy systemd service
+   sudo cat > /etc/systemd/system/real-estate-scraper.service << EOF
    [Unit]
-   Description=Real Estate Scraper Service
-   After=network.target
+   Description=Real Estate Data Collection Service
+   After=network.target mysql.service
    
    [Service]
-   Type=oneshot
+   Type=simple
    User=scraper
+   Group=scraper
    WorkingDirectory=/var/www/scraper
    Environment=PYTHONPATH=/var/www/scraper
+   Environment=SCRAPER_ENV=production
    ExecStart=/var/www/scraper/run_scraper.sh
+   Restart=always
+   RestartSec=10
+   
+   # Security
+   NoNewPrivileges=yes
+   PrivateTmp=yes
+   ProtectSystem=full
+   ProtectHome=yes
+   
+   # Resource limits
+   LimitNOFILE=65535
+   LimitNPROC=4096
    
    [Install]
    WantedBy=multi-user.target
+   EOF
+   
+   sudo systemctl daemon-reload
+   sudo systemctl enable real-estate-scraper
    ```
 
-### Advanced Scheduling
-
-1. **Primary Scraper Schedule**
+4. **Advanced Scheduling**
    ```bash
-   # Deploy optimized crontab configuration
-   cat << 'EOF' | sudo tee /etc/cron.d/real-estate-scraper
+   # Deploy crontab configuration
+   sudo cat > /etc/cron.d/real-estate-scraper << EOF
    SHELL=/bin/bash
    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
    PYTHONPATH=/var/www/scraper
    
-   # Main scraping schedule (peak hours)
-   0 5,7,9,11,13,15,17,19 * * * scraper /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
+   # Main scraping schedule
+   0 5,7,9,11,13,15,17,19 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
    
-   # Database maintenance (nightly)
-   0 1 * * * scraper /var/www/scraper/scripts/db_maintenance.sh >> /var/www/scraper/logs/maintenance.log 2>&1
+   # Health checks (every 5 minutes)
+   */5 * * * * scraper /var/www/scraper/scripts/health_check.sh > /dev/null 2>&1
    
-   # Log rotation (weekly)
-   0 0 * * 0 scraper /usr/sbin/logrotate /etc/logrotate.d/scraper-logs
-   EOF
+   # Database maintenance
+   0 2 * * * scraper /var/www/scraper/scripts/db_maintenance.sh > /dev/null 2>&1
    
-   sudo chmod 644 /etc/cron.d/real-estate-scraper
-   ```
-
-2. **Log Rotation Configuration**
-   ```bash
-   # Configure logrotate
-   cat << 'EOF' | sudo tee /etc/logrotate.d/scraper-logs
-   /var/www/scraper/logs/*.log {
-       weekly
-       rotate 4
-       compress
-       delaycompress
-       missingok
-       notifempty
-       create 0640 scraper scraper
-   }
+   # Log rotation
+   0 0 * * 0 scraper /usr/sbin/logrotate -f /etc/logrotate.d/scraper-logs
    EOF
    ```
 
-3. **Monitoring Script**
-   ```bash
-   #!/bin/bash
-   # monitor_scraper.sh
-   
-   # Check if scraper is running
-   if ! pgrep -f "python main.py" > /dev/null; then
-       echo "Scraper not running. Restarting..."
-       systemctl start real-estate-scraper
-   fi
-   
-   # Check log for errors
-   if grep -i "error" /var/www/scraper/logs/scraper.log | tail -n 10; then
-       curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-           -d "chat_id=${TELEGRAM_CHAT_ID}" \
-           -d "text=⚠️ Scraper errors detected! Check logs."
-   fi
-   ```
+## Performance Optimization
 
-### Process Management
+### 1. Database Optimization
 
-1. **Resource Limits**
-   ```bash
-   # Set process limits
-   cat << 'EOF' | sudo tee /etc/security/limits.d/scraper.conf
-   scraper          soft    nofile          65535
-   scraper          hard    nofile          65535
-   scraper          soft    nproc           4096
-   scraper          hard    nproc           4096
-   EOF
-   ```
+```sql
+-- Optimize tables weekly
+OPTIMIZE TABLE properties;
 
-2. **Process Control**
-   ```bash
-   # Systemd process management
-   sudo systemctl enable real-estate-scraper
-   sudo systemctl start real-estate-scraper
-   
-   # Monitor service status
-   sudo journalctl -u real-estate-scraper -f
-   ```
+-- Update statistics
+ANALYZE TABLE properties;
 
-### CI/CD Pipeline
+-- Clean old records
+DELETE FROM properties 
+WHERE updated_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 
-```yaml
-name: Deploy Real Estate Scraper
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'  # Daily deployment check
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          
-      - name: Run tests
-        run: |
-          python -m pytest tests/
-          
-      - name: Deploy to production
-        if: github.ref == 'refs/heads/main'
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-        run: |
-          bash scripts/deploy.sh
-          
-      - name: Notify deployment status
-        if: always()
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-              -d "chat_id=${TELEGRAM_CHAT_ID}" \
-              -d "text=🚀 Deployment ${{ job.status }}"
+-- Maintain indices
+ALTER TABLE properties FORCE;
 ```
 
-### Monitoring & Recovery
+### 2. Resource Management
 
-1. **Health Checks**
-   ```bash
-   #!/bin/bash
-   # health_check.sh
-   
-   # Check system resources
-   MEMORY_USAGE=$(free -m | awk 'NR==2{printf "%.2f%%", $3*100/$2}')
-   DISK_USAGE=$(df -h | awk '$NF=="/"{printf "%s", $5}')
-   CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}')
-   
-   # Check database connectivity
-   mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" -e "SELECT 1;" > /dev/null 2>&1
-   DB_STATUS=$?
-   
-   # Report status
-   if [ $DB_STATUS -ne 0 ] || [ ${MEMORY_USAGE%.*} -gt 90 ] || [ ${DISK_USAGE%.*} -gt 90 ]; then
-       curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-           -d "chat_id=${TELEGRAM_CHAT_ID}" \
-           -d "text=🔴 System alerts:
-           Memory: $MEMORY_USAGE
-           Disk: $DISK_USAGE
-           CPU: $CPU_USAGE%
-           Database: $([ $DB_STATUS -eq 0 ] && echo '✅' || echo '❌')"
-   fi
-   ```
+```bash
+# Set process limits
+cat > /etc/security/limits.d/scraper.conf << EOF
+scraper          soft    nofile          65535
+scraper          hard    nofile          65535
+scraper          soft    nproc           4096
+scraper          hard    nproc           4096
+scraper          soft    as              unlimited
+scraper          hard    as              unlimited
+EOF
+```
 
-2. **Auto-Recovery**
-   ```bash
-   # Deploy supervisor configuration
-   cat << 'EOF' | sudo tee /etc/supervisor/conf.d/scraper.conf
-   [program:real-estate-scraper]
-   command=/var/www/scraper/run_scraper.sh
-   user=scraper
-   directory=/var/www/scraper
-   autostart=true
-   autorestart=true
-   startretries=3
-   stderr_logfile=/var/www/scraper/logs/supervisor.err.log
-   stdout_logfile=/var/www/scraper/logs/supervisor.out.log
-   environment=PYTHONPATH="/var/www/scraper",SCRAPER_ENV="production"
-   EOF
-   ```
+### 3. Connection Pooling
 
-## 👥 Contributing
+```python
+# Configure aiohttp connection pooling
+connector = aiohttp.TCPConnector(
+    limit=10,              # Max connections
+    limit_per_host=2,      # Max per host
+    enable_cleanup_closed=True,
+    force_close=True,
+    verify_ssl=False,
+    ttl_dns_cache=300,
+    use_dns_cache=True
+)
+```
 
-Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+## Contributing
 
-## 📄 License
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on our code of conduct and the process for submitting pull requests.
+
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙋‍♂️ Author
+## Author
 
 **Ismat Samadov**
 - GitHub: [@Ismat-Samadov](https://github.com/Ismat-Samadov)
 - Email: [ismetsemedov@gmail.com](mailto:ismetsemedov@gmail.com)
-
-## 🛠️ Tech Stack
-
-- [Python](https://www.python.org/) - Core language
-- [aiohttp](https://docs.aiohttp.org/) - Async HTTP client/server
-- [BeautifulSoup4](https://www.crummy.com/software/BeautifulSoup/) - HTML parsing
-- [MySQL Connector](https://dev.mysql.com/doc/connector-python/en/) - Database operations
-- [python-telegram-bot](https://python-telegram-bot.org/) - Telegram integration
-- [GitHub Actions](https://github.com/features/actions) - CI/CD pipeline
