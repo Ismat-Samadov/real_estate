@@ -521,7 +521,6 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         logger.error(f"Database error: {str(e)}")
         raise
     
-    
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()
@@ -534,17 +533,18 @@ async def run_scrapers():
         'avg_time_per_listing': 0
     }
     
+    # Standardize website names
     page_config = {
-        "Bina.az": 4,
-        "Tap.az": 4,        
-        "Emlak.az": 4,      
-        "Lalafo.az": 4,     
-        "EV10.az": 1,       
-        "Unvan.az": 1,       
-        "Arenda.az": 1,      
-        "YeniEmlak.az": 1,   
-        "Ipoteka.az": 1,     
-        "VipEmlak.az": 1     
+        "bina.az": 1,
+        # "tap.az": 4,        
+        # "emlak.az": 4,      
+        # "lalafo.az": 4,     
+        # "ev10.az": 1,       
+        # "unvan.az": 1,       
+        # "arenda.az": 1,      
+        # "yeniemlak.az": 1,   
+        # "ipoteka.az": 1,     
+        # "vipemlak.az": 1     
     }
     
     all_results = []
@@ -555,17 +555,18 @@ async def run_scrapers():
             logger.error("Failed to verify Bright Data proxy connection")
             return [], stats
             
+        # Match website names with page_config
         scrapers = [
-            ("Arenda.az", OptimizedArendaScraper()),
-            ("EV10.az", EV10Scraper()),
-            ("YeniEmlak.az", YeniEmlakScraper()),
-            ("Emlak.az", EmlakAzScraper()),
-            ("Bina.az", BinaScraper()),
-            ("Ipoteka.az", IpotekaScraper()),
-            ("Unvan.az", UnvanScraper()),
-            ("VipEmlak.az", VipEmlakScraper()),
-            ("Lalafo.az", LalafoScraper()),
-            ("Tap.az", TapAzScraper())
+            ("bina.az", BinaScraper()),
+            # ("arenda.az", OptimizedArendaScraper()),
+            # ("ev10.az", EV10Scraper()),
+            # ("yeniemlak.az", YeniEmlakScraper()),
+            # ("emlak.az", EmlakAzScraper()),
+            # ("ipoteka.az", IpotekaScraper()),
+            # ("unvan.az", UnvanScraper()),
+            # ("vipemlak.az", VipEmlakScraper()),
+            # ("lalafo.az", LalafoScraper()),
+            # ("tap.az", TapAzScraper())
         ]
         
         for name, scraper in scrapers:
@@ -578,6 +579,9 @@ async def run_scrapers():
                 
                 if results:
                     stats['success_count'][name] = len(results)
+                    # Ensure consistent website naming in results
+                    for result in results:
+                        result['source_website'] = name
                     all_results.extend(results)
                 
                 scraper_duration = time.time() - scraper_start
@@ -622,13 +626,19 @@ async def main():
         results, scraper_stats = await run_scrapers()
         logger.info(f"All scrapers completed. Total listings: {len(results)}")
         
-        # Initialize db_stats with zeros in case database operations fail
+        # Initialize db_stats with default structure
         db_stats = {
             'successful_inserts': 0,
             'successful_updates': 0,
             'failed': 0,
             'error_details': defaultdict(int),
-            'updated_fields': defaultdict(int)
+            'updated_fields': defaultdict(int),
+            'website_stats': defaultdict(lambda: {
+                'new': 0,
+                'updated': 0,
+                'failed': 0,
+                'updated_fields': defaultdict(int)
+            })
         }
         
         if connection and results:
@@ -642,10 +652,10 @@ async def main():
         # Send report with both scraper and database stats
         try:
             reporter = TelegramReporter()
-            await reporter.send_report(scraper_stats, db_stats, results)
+            await reporter.send_report(scraper_stats, db_stats)
             logger.info("Telegram report sent successfully")
         except Exception as e:
-            logger.error(f"Failed to send Telegram report: {str(e)}")
+            logger.error(f"Failed to send Telegram report: {str(e)}", exc_info=True)
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
@@ -654,6 +664,6 @@ async def main():
         if connection:
             connection.close()
         logger.info("Application shutting down")
-
+        
 if __name__ == "__main__":
     asyncio.run(main())
