@@ -22,7 +22,7 @@ class BinaScraper:
         },
         'rent': {
             'url': "https://bina.az/kiraye",
-            'type': 'monthly'  # Default to monthly, we'll detect daily from title
+            'type': 'monthly'
         }
     }
     
@@ -324,17 +324,74 @@ class BinaScraper:
                 'updated_at': datetime.datetime.now()
             }
             
-            # Extract title
+            # Extract title and description first
             title = soup.select_one('h1.product-title')
             if title:
                 data['title'] = title.text.strip()
             
-            # Extract description
             desc = soup.select_one('.product-description__content')
             if desc:
                 data['description'] = desc.text.strip()
             
-            # Extract and validate coordinates
+            # Extract property type from properties section
+            property_items = soup.select('.product-properties__i')
+            for item in property_items:
+                label = item.select_one('.product-properties__i-name')
+                value = item.select_one('.product-properties__i-value')
+                if label and value:
+                    label_text = label.text.strip().lower()
+                    value_text = value.text.strip().lower()
+                    
+                    if 'kateqoriya' in label_text:
+                        if 'köhnə tikili' in value_text:
+                            data['property_type'] = 'old'
+                        elif 'yeni tikili' in value_text:
+                            data['property_type'] = 'new'
+                        elif 'həyət evi' in value_text or 'villa' in value_text:
+                            data['property_type'] = 'house'
+                        elif 'ofis' in value_text:
+                            data['property_type'] = 'office'
+                        elif 'qaraj' in value_text:
+                            data['property_type'] = 'garage'
+                        elif 'torpaq' in value_text:
+                            data['property_type'] = 'land'
+                        else:
+                            data['property_type'] = 'apartment'
+            
+            # Extract timestamps and views from statistics section
+            stats_container = soup.select_one('.product-statistics')
+            if stats_container:
+                for stat in stats_container.select('.product-statistics__i-text'):
+                    text = stat.text.strip()
+                    if text:
+                        if 'Baxışların sayı:' in text:
+                            try:
+                                # Extract number after colon
+                                views = int(text.split(':')[1].strip())
+                                data['views_count'] = views
+                            except (ValueError, IndexError):
+                                pass
+                        elif 'Yeniləndi:' in text:
+                            try:
+                                # Extract and parse date after colon
+                                date_str = text.split('Yeniləndi:')[1].strip()
+                                # Parse the date and time
+                                parsed_datetime = datetime.datetime.strptime(date_str, '%d.%m.%Y, %H:%M')
+                                data['listing_date'] = parsed_datetime.date()
+                                data['updated_at'] = parsed_datetime
+                            except (ValueError, IndexError) as e:
+                                self.logger.warning(f"Failed to parse date from: {text}, error: {str(e)}")
+            # Extract contact type from owner info
+            owner_info = soup.select_one('.product-owner__info')
+            if owner_info:
+                contact_region = owner_info.select_one('.product-owner__info-region')
+                if contact_region:
+                    data['contact_type'] = contact_region.text.strip()
+                contact_name = owner_info.select_one('.product-owner__info-name')
+                if contact_name:
+                    data['contact_name'] = contact_name.text.strip()
+                
+            # Extract coordinates if available
             map_elem = soup.select_one('#item_map')
             if map_elem:
                 try:
@@ -346,33 +403,31 @@ class BinaScraper:
                         data['longitude'] = lon
                 except (ValueError, TypeError, AttributeError):
                     self.logger.warning(f"Invalid coordinates for listing {listing_id}")
-
-            # Extract location info from breadcrumbs or meta info
-            location_info = soup.select('.product-map__controls')
-            for info in location_info:
-                text = info.text.strip().lower()
-                if 'metro' in text:
-                    data['metro_station'] = text.replace('metro', '').strip()
-                elif 'rayon' in text:
-                    data['district'] = text.replace('rayon', '').strip()
+            
+            # Extract location info
+            address_elem = soup.select_one('.product-map__left__address')
+            if address_elem:
+                data['address'] = address_elem.text.strip()
+            
+            # Extract metro station and district
+            location_extras = soup.select('.product-extras__i a')
+            for extra in location_extras:
+                href = extra.get('href', '').lower()
+                text = extra.text.strip()
+                if '/metro' in href or 'metro' in text.lower():
+                    data['metro_station'] = text.split('m.')[1].strip() if 'm.' in text else text.strip()
+                elif 'r.' in text.lower():
+                    district = text.replace('r.', '').strip()
+                    data['district'] = district.split()[0] if district else None
                 else:
                     data['location'] = text
-
-            # Extract phone numbers
+            
+            # Extract phone numbers and WhatsApp availability
             phones = await self.get_phone_numbers(listing_id)
             if phones:
                 data['contact_phone'] = phones[0] if phones else None
                 data['whatsapp_available'] = bool(soup.select_one('.wp_status_ico'))
-
-            # Extract timestamps
-            date_elem = soup.select_one(':-soup-contains("Yeniləndi")')
-            if date_elem:
-                try:
-                    date_str = date_elem.text.split(':')[1].strip()
-                    data['updated_at'] = datetime.datetime.strptime(date_str, '%d.%m.%Y, %H:%M')
-                except (ValueError, IndexError):
-                    pass
-
+            
             # Extract photos
             photos = []
             photo_elems = soup.select('.product-photos__slider-top img[src]')
@@ -380,7 +435,6 @@ class BinaScraper:
                 src = img.get('src')
                 if src and not src.endswith('load.gif'):
                     photos.append(src)
-
             if photos:
                 data['photos'] = json.dumps(photos)
             
@@ -388,11 +442,11 @@ class BinaScraper:
             features = []
             if soup.select_one('.repair'):
                 features.append('təmirli')
+                data['has_repair'] = True
             if soup.select_one('.bill_of_sale'):
                 features.append('kupçalı')
             if soup.select_one('.mortgage'):
                 features.append('ipoteka var')
-                
             if features:
                 data['amenities'] = json.dumps(features)
             
@@ -402,6 +456,7 @@ class BinaScraper:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
 
+    
 
     async def run(self, pages: int = 1) -> List[Dict]:
         """Run scraper for specified number of pages for both sale and rental listings"""
