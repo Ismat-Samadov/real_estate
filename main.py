@@ -535,7 +535,7 @@ async def run_scrapers():
     
     # Standardize website names
     page_config = {
-        "bina.az": 20,
+        "bina.az": 10,
         # "tap.az": 4,        
         # "emlak.az": 4,      
         # "lalafo.az": 4,     
