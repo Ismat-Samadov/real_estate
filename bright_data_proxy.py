@@ -93,6 +93,7 @@ class BrightDataProxy:
         """Apply enhanced proxy configuration to a scraper instance"""
         # Set proxy URL on the scraper instance
         scraper_instance.proxy_url = self.proxy_url
+        self.logger.info(f"Applied proxy URL to {scraper_instance.__class__.__name__}")
         
         async def new_get_page_content(url: str, params: Optional[dict] = None) -> str:
             max_retries = 3

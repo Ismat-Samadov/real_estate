@@ -11,7 +11,6 @@ import re
 import json
 import time
 from urllib.parse import urljoin
-from bright_data_proxy import BrightDataProxy
 
 class BinaScraper:
     """Scraper for bina.az real estate listings"""
@@ -24,9 +23,7 @@ class BinaScraper:
         self.logger = logging.getLogger(__name__)
         self.session = None
         # Don't get proxy URL from env directly - will be set by proxy manager
-        bright_data_proxy = BrightDataProxy()
-        proxy_url = bright_data_proxy.proxy_url
-        self.proxy_url = proxy_url if proxy_url else None
+        self.proxy_url = None
 
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""
@@ -48,20 +45,32 @@ class BinaScraper:
                 'Upgrade-Insecure-Requests': '1'
             }
             
-            # Initialize session with custom SSL context and connection pooling
             conn = aiohttp.TCPConnector(
                 ssl=False,
-                limit=10,  # Connection pool size
-                ttl_dns_cache=300 , # DNS cache TTL
-                force_close=True  # Add this to ensure fresh connections
+                limit=10,
+                ttl_dns_cache=300,
+                force_close=True
             )
+            
+            # Create proxy auth
+            if self.proxy_url:
+                proxy_auth = aiohttp.BasicAuth(
+                    login=self.proxy_url.split('@')[0].split('//')[1].split(':')[0],
+                    password=self.proxy_url.split('@')[0].split(':')[1]
+                )
+            else:
+                proxy_auth = None
             
             self.session = aiohttp.ClientSession(
                 headers=headers,
                 connector=conn,
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=30),
+                trust_env=True,  # Trust environment variables
+                # Add proxy to session configuration
+                proxy=self.proxy_url if self.proxy_url else None,
+                proxy_auth=proxy_auth if proxy_auth else None
             )
-
+        
     async def close_session(self):
         """Close aiohttp session"""
         if self.session:
@@ -384,7 +393,7 @@ class BinaScraper:
                 headers=headers,
                 params=params,
                 cookies=cookies,
-                proxy=proxy_url,  # Use proxy URL directly
+                proxy=self.proxy_url,
                 timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=False
             ) as response:
