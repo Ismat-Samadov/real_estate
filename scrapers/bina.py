@@ -320,38 +320,69 @@ class BinaScraper:
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
         """Fetch phone numbers for a listing"""
         try:
+            # First get the listing page to get the CSRF token
+            detail_url = f"{self.BASE_URL}/items/{listing_id}"
+            detail_response = await self.session.get(detail_url)
+            detail_html = await detail_response.text()
+            
+            # Extract CSRF token from meta tag
+            soup = BeautifulSoup(detail_html, 'lxml')
+            csrf_token = None
+            csrf_meta = soup.select_one('meta[name="csrf-token"]')
+            if csrf_meta:
+                csrf_token = csrf_meta.get('content')
+            
             # Construct the phone API URL
             phone_url = f"{self.BASE_URL}/items/{listing_id}/phones"
             
             # Required headers for the phone API request
             headers = {
-                'Accept': 'application/json',
-                'Referer': f'https://bina.az/items/{listing_id}',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Referer': detail_url,
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrf_token if csrf_token else '',
                 'DNT': '1',
-                'Sec-Ch-Ua': '"Google Chrome"',
+                'Origin': self.BASE_URL,
+                'Sec-Ch-Ua': '"Not A(Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
                 'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"'
+                'Sec-Ch-Ua-Platform': '"macOS"',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Dest': 'empty'
             }
             
             params = {
-                'source_link': f'https://bina.az/items/{listing_id}',
+                'source_link': detail_url,
                 'trigger_button': 'main'
+            }
+            
+            # Add necessary cookies
+            cookies = {
+                'language': 'az',
+                '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}'
             }
             
             async with self.session.get(
                 phone_url,
                 headers=headers,
                 params=params,
-                timeout=aiohttp.ClientTimeout(total=10)
+                cookies=cookies,
+                timeout=aiohttp.ClientTimeout(total=10),
+                allow_redirects=False
             ) as response:
                 if response.status == 200:
                     data = await response.json()
                     return data.get('phones', [])
-                return []
+                else:
+                    self.logger.error(f"Phone API failed for listing {listing_id}: Status {response.status}")
+                    self.logger.error(f"Response headers: {response.headers}")
+                    self.logger.error(f"Response body: {await response.text()}")
+                    return []
+                    
         except Exception as e:
             self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
             return []
+
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse detailed listing page and fetch phone numbers"""
