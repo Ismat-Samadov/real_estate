@@ -3,6 +3,7 @@ import logging
 import aiohttp
 import asyncio
 import random
+import time
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -66,9 +67,6 @@ class BrightDataProxy:
 
     async def create_session(self) -> aiohttp.ClientSession:
         """Create an aiohttp session with enhanced proxy configuration"""
-        # Add random delay between requests
-        delay = random.uniform(1, 3)
-        
         connector = aiohttp.TCPConnector(
             ssl=False,
             limit=3,  # Limit concurrent connections
@@ -92,18 +90,33 @@ class BrightDataProxy:
 
     def apply_to_scraper(self, scraper_instance) -> None:
         """Apply enhanced proxy configuration to a scraper instance"""
-        original_init = scraper_instance.init_session
+        # Set proxy URL on the scraper instance
+        scraper_instance.proxy_url = self.proxy_url
         
         async def new_get_page_content(url: str, params: Optional[dict] = None) -> str:
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    # Add random delay between requests
                     await asyncio.sleep(random.uniform(2, 5))
+                    
+                    # Add required headers for the website
+                    headers = {
+                        'Referer': 'https://bina.az/',
+                        'Origin': 'https://bina.az',
+                        'Host': 'bina.az'
+                    }
+                    
+                    # Add necessary cookies
+                    cookies = {
+                        'language': 'az',
+                        '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}'
+                    }
                     
                     async with scraper_instance.session.get(
                         url,
                         params=params,
+                        headers={**scraper_instance.session.headers, **headers},
+                        cookies=cookies,
                         proxy=self.proxy_url,
                         timeout=30,
                         allow_redirects=True,
@@ -113,11 +126,15 @@ class BrightDataProxy:
                             return await response.text()
                         elif response.status in [403, 402, 502]:
                             # Wait longer on blocking errors
-                            await asyncio.sleep(random.uniform(5, 10))
+                            retry_delay = random.uniform(5, 10)
+                            self.logger.warning(f"Rate limited ({response.status}) on attempt {attempt + 1}, waiting {retry_delay}s")
+                            await asyncio.sleep(retry_delay)
                             if attempt == max_retries - 1:
                                 raise Exception(f"Failed with status {response.status}")
                             continue
                         else:
+                            response_text = await response.text()
+                            self.logger.error(f"Failed with status {response.status}. Response: {response_text[:500]}")
                             raise Exception(f"Failed with status {response.status}")
                             
                 except Exception as e:
@@ -125,7 +142,7 @@ class BrightDataProxy:
                         raise
                     await asyncio.sleep(random.uniform(3, 7))
                     
-            raise Exception("Max retries exceeded")
+            raise Exception(f"Max retries ({max_retries}) exceeded for URL: {url}")
         
         # Replace the get_page_content method
         scraper_instance.get_page_content = new_get_page_content

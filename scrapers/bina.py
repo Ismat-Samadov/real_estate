@@ -17,11 +17,13 @@ class BinaScraper:
     
     BASE_URL = "https://bina.az"
     LISTINGS_URL = "https://bina.az/items/all"
-        
+
     def __init__(self):
         """Initialize scraper"""
         self.logger = logging.getLogger(__name__)
         self.session = None
+        # Don't get proxy URL from env directly - will be set by proxy manager
+        self.proxy_url = None
 
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""
@@ -47,7 +49,8 @@ class BinaScraper:
             conn = aiohttp.TCPConnector(
                 ssl=False,
                 limit=10,  # Connection pool size
-                ttl_dns_cache=300  # DNS cache TTL
+                ttl_dns_cache=300 , # DNS cache TTL
+                force_close=True  # Add this to ensure fresh connections
             )
             
             self.session = aiohttp.ClientSession(
@@ -89,6 +92,7 @@ class BinaScraper:
                     params=params,
                     headers={**self.session.headers, **headers},
                     cookies=cookies,
+                    proxy=self.proxy_url,  # Use the proxy URL set by proxy manager
                     timeout=aiohttp.ClientTimeout(total=20)
                 ) as response:
                     if response.status == 200:
@@ -318,14 +322,13 @@ class BinaScraper:
             return None, None
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        """Fetch phone numbers for a listing"""
         try:
-            # First get the listing page to get the CSRF token
             detail_url = f"{self.BASE_URL}/items/{listing_id}"
+            
             detail_response = await self.session.get(
                 detail_url,
-                headers=self.session.headers,  # Use session headers
-                proxy=self.session._connector._proxy,  # Use session proxy
+                headers=self.session.headers,
+                proxy=self.proxy_url,  # Use instance proxy URL
                 timeout=aiohttp.ClientTimeout(total=10)
             )
             detail_html = await detail_response.text()
@@ -378,7 +381,7 @@ class BinaScraper:
                 headers=headers,
                 params=params,
                 cookies=cookies,
-                proxy=self.session._connector._proxy,  # Use session proxy
+                proxy=proxy_url,  # Use proxy URL directly
                 timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=False
             ) as response:
@@ -401,7 +404,7 @@ class BinaScraper:
         except Exception as e:
             self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
             return []
-
+        
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse detailed listing page and fetch phone numbers"""
         soup = BeautifulSoup(html, 'lxml')
