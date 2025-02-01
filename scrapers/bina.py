@@ -104,7 +104,6 @@ class BinaScraper:
                     params=params,
                     headers={**self.session.headers, **headers},
                     cookies=cookies,
-                    proxy=self.proxy_url,  # Use the proxy URL set by proxy manager
                     timeout=aiohttp.ClientTimeout(total=20)
                 ) as response:
                     if response.status == 200:
@@ -340,7 +339,6 @@ class BinaScraper:
             detail_response = await self.session.get(
                 detail_url,
                 headers=self.session.headers,
-                proxy=self.proxy_url,  # Use instance proxy URL
                 timeout=aiohttp.ClientTimeout(total=10)
             )
             detail_html = await detail_response.text()
@@ -393,7 +391,6 @@ class BinaScraper:
                 headers=headers,
                 params=params,
                 cookies=cookies,
-                proxy=self.proxy_url,
                 timeout=aiohttp.ClientTimeout(total=10),
                 allow_redirects=False
             ) as response:
