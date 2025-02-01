@@ -11,6 +11,7 @@ import re
 import json
 import time
 from urllib.parse import urljoin
+from bright_data_proxy import BrightDataProxy.proxy_url
 
 class BinaScraper:
     """Scraper for bina.az real estate listings"""
