@@ -11,7 +11,7 @@ import re
 import json
 import time
 from urllib.parse import urljoin
-from bright_data_proxy import BrightDataProxy.proxy_url
+from bright_data_proxy import BrightDataProxy
 
 class BinaScraper:
     """Scraper for bina.az real estate listings"""
@@ -24,7 +24,7 @@ class BinaScraper:
         self.logger = logging.getLogger(__name__)
         self.session = None
         # Don't get proxy URL from env directly - will be set by proxy manager
-        self.proxy_url = proxy_url
+        proxy_url = BrightDataProxy.proxy_url
 
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""
