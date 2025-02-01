@@ -385,89 +385,119 @@ class BinaScraper:
             return None, None
         except (ValueError, TypeError):
             return None, None
-
+     
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
+        """Fetch phone numbers with exact API requirements"""
         try:
-            detail_url = f"{self.BASE_URL}/items/{listing_id}"
+            # Add delay before phone request
+            await asyncio.sleep(random.uniform(5, 8))
             
-            detail_response = await self.session.get(
-                detail_url,
-                headers=self.session.headers,
-                timeout=aiohttp.ClientTimeout(total=10)
-            )
-            detail_html = await detail_response.text()
-            
-            # Extract CSRF token from meta tag
-            soup = BeautifulSoup(detail_html, 'lxml')
-            csrf_token = None
-            csrf_meta = soup.select_one('meta[name="csrf-token"]')
-            if csrf_meta:
-                csrf_token = csrf_meta.get('content')
-                
-            # Get any cookies from the detail page response
-            cookies = dict(detail_response.cookies)
-            cookies.update({
-                'language': 'az',
-                '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}'
-            })
-            
-            # Construct the phone API URL
-            phone_url = f"{self.BASE_URL}/items/{listing_id}/phones"
-            
-            # Required headers for the phone API request
-            headers = {
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Referer': detail_url,
-                'X-Requested-With': 'XMLHttpRequest',
-                'X-CSRF-Token': csrf_token if csrf_token else '',
-                'DNT': '1',
-                'Origin': self.BASE_URL,
-                'Sec-Ch-Ua': '"Not A(Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Dest': 'empty',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Host': 'bina.az'
-            }
-            
+            # Construct exact URL with query parameters
+            source_link = f"https://bina.az/items/{listing_id}"
+            url = f"https://bina.az/items/{listing_id}/phones"
             params = {
-                'source_link': detail_url,
+                'source_link': source_link,
                 'trigger_button': 'main'
             }
             
-            # Add longer delay between requests
-            await asyncio.sleep(random.uniform(2, 4))
-            
+            # Exact headers from the working request
+            headers = {
+                'authority': 'bina.az',
+                'accept': 'application/json, text/javascript, */*; q=0.01',
+                'accept-encoding': 'gzip, deflate, br, zstd',
+                'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
+                'dnt': '1',
+                'priority': 'u=1, i',
+                'referer': source_link,
+                'sec-ch-ua': '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"macOS"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36',
+                'x-requested-with': 'XMLHttpRequest'
+            }
+
+            # First get the CSRF token and cookies from the listing page
             async with self.session.get(
-                phone_url,
-                headers=headers,
-                params=params,
-                cookies=cookies,
-                timeout=aiohttp.ClientTimeout(total=10),
-                allow_redirects=False
+                source_link,
+                proxy=self.proxy_url,
+                timeout=aiohttp.ClientTimeout(total=20),
+                headers=headers
             ) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    return data.get('phones', [])
-                elif response.status == 403:
-                    # Add exponential backoff on 403 errors
-                    retry_delay = random.uniform(5, 10)
-                    self.logger.warning(f"Rate limited (403) for listing {listing_id}, waiting {retry_delay}s")
-                    await asyncio.sleep(retry_delay)
-                    return []
-                else:
-                    self.logger.error(f"Phone API failed for listing {listing_id}: Status {response.status}")
-                    self.logger.error(f"Response headers: {response.headers}")
-                    response_text = await response.text()
-                    self.logger.error(f"Response body: {response_text[:500]}")  # Log first 500 chars
-                    return []
+                    html = await response.text()
+                    # Extract CSRF token from meta tag
+                    csrf_token = None
+                    soup = BeautifulSoup(html, 'lxml')
+                    csrf_meta = soup.select_one('meta[name="csrf-token"]')
+                    if csrf_meta:
+                        csrf_token = csrf_meta.get('content')
+                        headers['x-csrf-token'] = csrf_token
+
+                    # Get cookies from the response
+                    cookies = {
+                        'language': 'az',
+                        '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                        '_gid': f'GA1.2.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                        '_gat': '1',
+                        '_gat_gtag_UA_30020417_7': '1',
+                    }
                     
-        except Exception as e:
-            self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
+                    # Add response cookies
+                    if response.cookies:
+                        for key, morsel in response.cookies.items():
+                            cookies[key] = morsel.value
+
+            # Now make the phone API request
+            MAX_RETRIES = 3
+            for attempt in range(MAX_RETRIES):
+                try:
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers=headers,
+                        cookies=cookies,
+                        proxy=self.proxy_url,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        allow_redirects=False
+                    ) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            phones = data.get('phones', [])
+                            self.logger.debug(f"Successfully got phones for listing {listing_id}: {phones}")
+                            return phones
+                        elif response.status in [403, 429]:
+                            retry_delay = 15 * (2 ** attempt) + random.uniform(5, 10)
+                            self.logger.warning(
+                                f"Rate limited ({response.status}) for phone API on listing {listing_id}. "
+                                f"Waiting {retry_delay}s"
+                            )
+                            await asyncio.sleep(retry_delay)
+                            
+                            # Reset session on rate limit
+                            if attempt < MAX_RETRIES - 1:
+                                await self.session.close()
+                                self.session = await self.create_session()
+                            continue
+                        else:
+                            self.logger.error(f"Unexpected status {response.status} for phone API")
+                            return []
+
+                except Exception as e:
+                    self.logger.error(f"Error on attempt {attempt + 1} for listing {listing_id}: {str(e)}")
+                    if attempt < MAX_RETRIES - 1:
+                        await asyncio.sleep(10 * (attempt + 1))
+                        continue
+                    return []
+
             return []
-        
+                        
+        except Exception as e:
+            self.logger.error(f"Fatal error fetching phones for listing {listing_id}: {str(e)}")
+            return []
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse detailed listing page and fetch phone numbers"""
         soup = BeautifulSoup(html, 'lxml')
