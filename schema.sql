@@ -1,3 +1,4 @@
+--  Create the database schema for storing property listings
 CREATE TABLE properties (
     -- Primary key and unique identifier for each listing
     id BIGINT PRIMARY KEY AUTO_INCREMENT,

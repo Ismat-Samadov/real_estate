@@ -1,3 +1,4 @@
+# main.py file is the main entry point for the scraper application. It runs the scrapers, saves the results to the database, and sends a report to a Telegram channel.
 import os
 import logging
 import asyncio
@@ -535,7 +536,7 @@ async def run_scrapers():
     
     # Standardize website names
     page_config = {
-        "bina.az": 3,
+        "bina.az": 1,
         # "tap.az": 4,        
         # "emlak.az": 4,      
         # "lalafo.az": 4,     

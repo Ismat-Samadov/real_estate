@@ -1,3 +1,4 @@
+# bina.py file contains the scraper class for bina.az real estate listings
 import asyncio
 import aiohttp
 import random
@@ -15,17 +16,8 @@ class BinaScraper:
     """Scraper for bina.az real estate listings"""
     
     BASE_URL = "https://bina.az"
-    LISTING_TYPES = {
-        'sale': {
-            'url': "https://bina.az/alqi-satqi",
-            'type': 'sale'
-        },
-        'rent': {
-            'url': "https://bina.az/kiraye",
-            'type': 'monthly'
-        }
-    }
-    
+    LISTINGS_URL = "https://bina.az/items/all"
+        
     def __init__(self):
         """Initialize scraper"""
         self.logger = logging.getLogger(__name__)
@@ -158,8 +150,8 @@ class BinaScraper:
             return 'monthly'
         return 'sale'
 
-    async def parse_listing_page(self, html: str, listing_type: str) -> List[Dict]:
-        """Parse the listings page to extract basic listing info"""
+    async def parse_listing_page(self, html: str) -> List[Dict]:
+        """Parse the listings page to extract basic listing info with listing type detection"""
         listings = []
         soup = BeautifulSoup(html, 'lxml')
         
@@ -177,13 +169,25 @@ class BinaScraper:
                     
                 listing_url = urljoin(self.BASE_URL, link.get('href', ''))
                 
-                # Extract price 
+                # Extract price and detect listing type
                 price = None
+                listing_type = 'sale'  # Default type
+                
                 price_elem = listing.select_one('.price-val')
+                price_container = listing.select_one('.price-per')
+                
                 if price_elem:
                     price = self.extract_price(price_elem.text.strip())
+                    
+                    # Detect listing type from price format
+                    if price_container:
+                        price_text = price_container.text.strip().lower()
+                        if '/ay' in price_text or '/aylıq' in price_text:
+                            listing_type = 'monthly'
+                        elif '/gün' in price_text or '/günlük' in price_text:
+                            listing_type = 'daily'
                 
-                # Extract title for listing type detection
+                # Extract title
                 title_elem = listing.select_one('.card-title')
                 title = title_elem.text.strip() if title_elem else None
                 
@@ -194,7 +198,7 @@ class BinaScraper:
                     'source_website': 'bina.az',
                     'price': price,
                     'currency': 'AZN',
-                    'listing_type': self.detect_listing_type(title, listing_type),
+                    'listing_type': listing_type,
                     'created_at': datetime.datetime.now(),
                     'title': title
                 }
@@ -213,7 +217,8 @@ class BinaScraper:
                     if 'otaq' in text:
                         try:
                             rooms = int(re.search(r'\d+', text).group())
-                            listing_data['rooms'] = rooms
+                            if 1 <= rooms <= 20:  # Reasonable validation
+                                listing_data['rooms'] = rooms
                         except (ValueError, AttributeError):
                             pass
                             
@@ -221,16 +226,17 @@ class BinaScraper:
                     elif 'm²' in text:
                         try:
                             area = float(re.sub(r'[^\d.]', '', text))
-                            listing_data['area'] = area
+                            if 5 <= area <= 1000:  # Reasonable validation
+                                listing_data['area'] = area
                         except ValueError:
                             pass
                             
                     # Extract floor info
                     elif 'mərtəbə' in text:
                         floor, total_floors = self.extract_floor_info(text)
-                        if floor is not None:
+                        if floor is not None and 0 <= floor <= 100:  # Reasonable validation
                             listing_data['floor'] = floor
-                        if total_floors is not None:
+                        if total_floors is not None and 1 <= total_floors <= 100:  # Reasonable validation
                             listing_data['total_floors'] = total_floors
                 
                 # Extract repair status and other features
@@ -245,17 +251,51 @@ class BinaScraper:
                 if listing.select_one('.mortgage'):
                     features.append('ipoteka var')
                 
+                # Extract property type from listing
+                property_type_elem = listing.select_one('.name')
+                if property_type_elem:
+                    property_text = property_type_elem.text.strip().lower()
+                    if 'köhnə tikili' in property_text:
+                        listing_data['property_type'] = 'old'
+                    elif 'yeni tikili' in property_text:
+                        listing_data['property_type'] = 'new'
+                    elif 'həyət evi' in property_text or 'villa' in property_text:
+                        listing_data['property_type'] = 'house'
+                    elif 'ofis' in property_text:
+                        listing_data['property_type'] = 'office'
+                    elif 'qaraj' in property_text:
+                        listing_data['property_type'] = 'garage'
+                    elif 'torpaq' in property_text:
+                        listing_data['property_type'] = 'land'
+                    else:
+                        listing_data['property_type'] = 'apartment'
+                
+                # Extract metro station and district from location
+                location_text = listing_data.get('location', '').lower()
+                if location_text:
+                    # Extract metro station
+                    if 'm.' in location_text:
+                        metro_parts = location_text.split('m.')
+                        if len(metro_parts) > 1:
+                            listing_data['metro_station'] = metro_parts[1].split(',')[0].strip()
+                    
+                    # Extract district
+                    if 'r.' in location_text:
+                        district_parts = location_text.split('r.')
+                        if len(district_parts) > 1:
+                            listing_data['district'] = district_parts[0].strip()
+                
                 if features:
-                    listing_data['features'] = features
+                    listing_data['amenities'] = json.dumps(features)
                 
                 listings.append(listing_data)
                 
             except Exception as e:
-                self.logger.error(f"Error parsing listing card: {str(e)}")
+                self.logger.error(f"Error parsing listing card {listing_id if listing_id else 'unknown'}: {str(e)}")
                 continue
         
         return listings
-
+        
     def validate_coordinates(self, lat: float, lon: float) -> Tuple[Optional[float], Optional[float]]:
         """
         Validate and format coordinates to match database schema constraints
@@ -408,14 +448,20 @@ class BinaScraper:
             address_elem = soup.select_one('.product-map__left__address')
             if address_elem:
                 data['address'] = address_elem.text.strip()
-            
+
             # Extract metro station and district
             location_extras = soup.select('.product-extras__i a')
             for extra in location_extras:
-                href = extra.get('href', '').lower()
                 text = extra.text.strip()
-                if '/metro' in href or 'metro' in text.lower():
-                    data['metro_station'] = text.split('m.')[1].strip() if 'm.' in text else text.strip()
+                href = extra.get('href', '').lower()
+                # Check for metro station (ending with 'm.')
+                if text.lower().endswith('m.'):
+                    data['metro_station'] = text.replace('m.', '').strip()
+                # Or if it contains 'metro' in the text
+                elif 'metro' in text.lower():
+                    data['metro_station'] = text.replace('metro', '').strip()
+
+                # Extract district
                 elif 'r.' in text.lower():
                     district = text.replace('r.', '').strip()
                     data['district'] = district.split()[0] if district else None
@@ -455,63 +501,124 @@ class BinaScraper:
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-
-    
-
+        
     async def run(self, pages: int = 1) -> List[Dict]:
-        """Run scraper for specified number of pages for both sale and rental listings"""
+        """Run scraper for specified number of pages"""
         try:
+            start_time = time.time()
             self.logger.info("Starting Bina.az scraper")
             await self.init_session()
             
             all_results = []
+            failed_pages = []
+            failed_listings = []
             
-            # Iterate through each listing type
-            for listing_category, config in self.LISTING_TYPES.items():
-                self.logger.info(f"Scraping {listing_category} listings, {pages} pages")
-                
-                for page in range(1, pages + 1):
-                    try:
-                        self.logger.info(f"Processing {listing_category} page {page}")
-                        
-                        # Get page HTML
-                        url = f"{config['url']}?page={page}"
-                        html = await self.get_page_content(url)
-                        
-                        # Parse listings
-                        listings = await self.parse_listing_page(html, config['type'])
-                        self.logger.info(f"Found {len(listings)} {listing_category} listings on page {page}")
-                        
-                        # Get details for each listing
-                        for listing in listings:
-                            try:
-                                detail_html = await self.get_page_content(listing['source_url'])
-                                detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
-                                
-                                # Update listing type if it was refined from title
-                                if detail_data.get('title'):
-                                    detail_data['listing_type'] = self.detect_listing_type(
-                                        detail_data['title'], 
-                                        listing['listing_type']
-                                    )
-                                
-                                all_results.append({**listing, **detail_data})
-                            except Exception as e:
-                                self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
-                                continue
-                                
-                    except Exception as e:
-                        self.logger.error(f"Error processing {listing_category} page {page}: {str(e)}")
+            for page in range(1, pages + 1):
+                page_start_time = time.time()
+                try:
+                    self.logger.info(f"Processing page {page}/{pages}")
+                    
+                    # Get page HTML with the new URL
+                    url = f"{self.LISTINGS_URL}?page={page}"
+                    html = await self.get_page_content(url)
+                    
+                    if not html:
+                        self.logger.error(f"Empty HTML content for page {page}")
+                        failed_pages.append(page)
                         continue
                     
-                    # Add small delay between pages
-                    await asyncio.sleep(random.uniform(1, 2))
+                    # Parse listings with automatic type detection
+                    listings = await self.parse_listing_page(html)
+                    self.logger.info(f"Found {len(listings)} listings on page {page}")
+                    
+                    # Track success rate for this page
+                    successful_listings = 0
+                    
+                    # Get details for each listing
+                    for idx, listing in enumerate(listings, 1):
+                        try:
+                            self.logger.debug(f"Processing listing {idx}/{len(listings)} on page {page}")
+                            listing_start_time = time.time()
+                            
+                            # Add delay between listings
+                            if idx > 1:  # Skip delay for first listing
+                                await asyncio.sleep(random.uniform(0.5, 1.5))
+                            
+                            # Get detailed listing info
+                            detail_html = await self.get_page_content(listing['source_url'])
+                            if not detail_html:
+                                self.logger.error(f"Empty HTML content for listing {listing['listing_id']}")
+                                failed_listings.append(listing['listing_id'])
+                                continue
+                                
+                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                            
+                            # Validate and update listing type if needed
+                            if detail_data.get('title'):
+                                listing_type = listing.get('listing_type', 'sale')
+                                title_text = detail_data['title'].lower()
+                                price_text = str(detail_data.get('price', '')).lower()
+                                
+                                if '/ay' in price_text or 'aylıq' in title_text:
+                                    listing_type = 'monthly'
+                                elif '/gün' in price_text or 'günlük' in title_text:
+                                    listing_type = 'daily'
+                                
+                                detail_data['listing_type'] = listing_type
+                            
+                            # Combine listing data
+                            combined_data = {**listing, **detail_data}
+                            all_results.append(combined_data)
+                            successful_listings += 1
+                            
+                            # Log processing time for this listing
+                            listing_duration = time.time() - listing_start_time
+                            self.logger.debug(f"Listing {listing['listing_id']} processed in {listing_duration:.2f}s")
+                            
+                        except Exception as e:
+                            self.logger.error(f"Error processing listing {listing.get('listing_id', 'unknown')}: {str(e)}")
+                            failed_listings.append(listing.get('listing_id', 'unknown'))
+                            continue
+                    
+                    # Log page statistics
+                    page_duration = time.time() - page_start_time
+                    success_rate = (successful_listings / len(listings)) * 100 if listings else 0
+                    self.logger.info(
+                        f"Page {page} completed in {page_duration:.2f}s. "
+                        f"Success rate: {success_rate:.1f}% ({successful_listings}/{len(listings)})"
+                    )
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing page {page}: {str(e)}")
+                    failed_pages.append(page)
+                    continue
                 
-                # Add delay between listing types
-                await asyncio.sleep(random.uniform(2, 3))
+                # Add delay between pages
+                if page < pages:  # Skip delay after last page
+                    await asyncio.sleep(random.uniform(2, 4))
             
-            self.logger.info(f"Scraping completed. Total listings: {len(all_results)}")
+            # Calculate and log final statistics
+            total_duration = time.time() - start_time
+            success_rate = (len(all_results) / (len(all_results) + len(failed_listings))) * 100 if all_results or failed_listings else 0
+            
+            self.logger.info(
+                f"Scraping completed in {total_duration:.2f}s:\n"
+                f"- Total listings: {len(all_results)}\n"
+                f"- Success rate: {success_rate:.1f}%\n"
+                f"- Failed pages: {len(failed_pages)}\n"
+                f"- Failed listings: {len(failed_listings)}"
+            )
+            
+            if failed_pages:
+                self.logger.warning(f"Failed pages: {failed_pages}")
+            if failed_listings:
+                self.logger.warning(f"Number of failed listings: {len(failed_listings)}")
+            
             return all_results
+            
+        except Exception as e:
+            self.logger.error(f"Fatal error in scraper: {str(e)}", exc_info=True)
+            raise
             
         finally:
             self.logger.info("Closing scraper session")
