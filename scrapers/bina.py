@@ -24,7 +24,9 @@ class BinaScraper:
         self.logger = logging.getLogger(__name__)
         self.session = None
         # Don't get proxy URL from env directly - will be set by proxy manager
-        proxy_url = BrightDataProxy.proxy_url
+        bright_data_proxy = BrightDataProxy()
+        proxy_url = bright_data_proxy.proxy_url
+        self.proxy_url = proxy_url if proxy_url else None
 
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""

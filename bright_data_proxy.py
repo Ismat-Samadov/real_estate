@@ -1,3 +1,4 @@
+# bright_data_proxy.py - A module to handle Bright Data (formerly Luminati) residential proxy configuration
 import os
 import logging
 import aiohttp
