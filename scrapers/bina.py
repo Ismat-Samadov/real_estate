@@ -12,118 +12,172 @@ import json
 import time
 from urllib.parse import urljoin
 
+
 class BinaScraper:
-    """Scraper for bina.az real estate listings"""
-    
     BASE_URL = "https://bina.az"
     LISTINGS_URL = "https://bina.az/items/all"
-
+    
+    # New constants for rate limiting
+    MIN_DELAY = 3  # Minimum delay between requests
+    MAX_DELAY = 7  # Maximum delay between requests
+    PAGE_DELAY = 10  # Delay between pages
+    MAX_RETRIES = 5  # Maximum number of retries per request
+    BACKOFF_FACTOR = 2  # Exponential backoff multiplier
+    
     def __init__(self):
-        """Initialize scraper"""
         self.logger = logging.getLogger(__name__)
         self.session = None
-        # Don't get proxy URL from env directly - will be set by proxy manager
         self.proxy_url = None
+        self.request_count = 0
+        self.last_request_time = 0
+        
+    def _get_random_user_agent(self):
+        """Generate a random user agent string"""
+        browsers = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15'
+        ]
+        return random.choice(browsers)
 
     async def init_session(self):
-        """Initialize aiohttp session with browser-like headers"""
+        """Initialize session with enhanced headers and configuration"""
         if not self.session:
+            # Enhanced browser-like headers
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': self._get_random_user_agent(),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,az;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,az;q=0.8,ru;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
+                'DNT': '1',
                 'Connection': 'keep-alive',
-                'Cache-Control': 'max-age=0',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
+                'Upgrade-Insecure-Requests': '1',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
+                'Cache-Control': 'max-age=0'
             }
             
+            # Enhanced connector settings
             conn = aiohttp.TCPConnector(
                 ssl=False,
-                limit=10,
+                limit=3,  # Limit concurrent connections
                 ttl_dns_cache=300,
-                force_close=True
+                force_close=True,
+                enable_cleanup_closed=True
             )
             
-            # Create proxy auth
-            if self.proxy_url:
-                proxy_auth = aiohttp.BasicAuth(
-                    login=self.proxy_url.split('@')[0].split('//')[1].split(':')[0],
-                    password=self.proxy_url.split('@')[0].split(':')[1]
-                )
-            else:
-                proxy_auth = None
+            # Enhanced timeout settings
+            timeout = aiohttp.ClientTimeout(
+                total=30,
+                connect=10,
+                sock_read=10,
+                sock_connect=10
+            )
             
             self.session = aiohttp.ClientSession(
                 headers=headers,
                 connector=conn,
-                timeout=aiohttp.ClientTimeout(total=30),
-                trust_env=True,  # Trust environment variables
-                # Add proxy to session configuration
-                proxy=self.proxy_url if self.proxy_url else None,
-                proxy_auth=proxy_auth if proxy_auth else None
+                timeout=timeout,
+                trust_env=True,
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
+
+    async def _wait_between_requests(self):
+        """Implement intelligent delay between requests"""
+        now = time.time()
+        time_since_last = now - self.last_request_time
         
-    async def close_session(self):
-        """Close aiohttp session"""
-        if self.session:
-            await self.session.close()
-            self.session = None
+        # Calculate delay based on request count
+        base_delay = random.uniform(self.MIN_DELAY, self.MAX_DELAY)
+        if self.request_count > 10:
+            base_delay *= 1.5
+        if self.request_count > 20:
+            base_delay *= 2
+            
+        # Ensure minimum time between requests
+        if time_since_last < base_delay:
+            await asyncio.sleep(base_delay - time_since_last)
+            
+        self.last_request_time = time.time()
+        self.request_count += 1
 
     async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
-        """Fetch page content with retry logic and anti-bot measures"""
-        MAX_RETRIES = int(os.getenv('MAX_RETRIES', 5))
-        DELAY = int(os.getenv('REQUEST_DELAY', 1))
-        
-        # Add request-specific headers and cookies
-        headers = {
-            'Referer': 'https://bina.az/',
-            'Origin': 'https://bina.az',
-            'Host': 'bina.az'
-        }
-        
-        cookies = {
-            'language': 'az',
-            '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}'
-        }
-        
-        for attempt in range(MAX_RETRIES):
+        """Enhanced page content fetching with better rate limiting handling"""
+        for attempt in range(self.MAX_RETRIES):
             try:
-                self.logger.debug(f"Attempting to fetch {url} (Attempt {attempt + 1}/{MAX_RETRIES})")
-                await asyncio.sleep(DELAY + random.random() * 2)
+                await self._wait_between_requests()
+                
+                # Enhanced request headers
+                headers = {
+                    'Referer': 'https://bina.az/',
+                    'Origin': 'https://bina.az',
+                    'Host': 'bina.az',
+                    'User-Agent': self._get_random_user_agent(),
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+                
+                # Enhanced cookies
+                cookies = {
+                    'language': 'az',
+                    '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                    '_gid': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                    '__cf_bm': f'{random.randbytes(32).hex()}',  # Simulate Cloudflare cookie
+                }
                 
                 async with self.session.get(
                     url,
                     params=params,
                     headers={**self.session.headers, **headers},
                     cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=20)
+                    proxy=self.proxy_url,
+                    timeout=aiohttp.ClientTimeout(total=20),
+                    allow_redirects=True,
+                    verify_ssl=False
                 ) as response:
                     if response.status == 200:
                         return await response.text()
-                    elif response.status == 403:
-                        self.logger.warning(f"Access forbidden (403) on attempt {attempt + 1}")
-                        await asyncio.sleep(DELAY * (attempt + 2))
+                    elif response.status in [403, 429, 502, 503]:
+                        # Enhanced backoff for rate limiting
+                        backoff_time = self.MIN_DELAY * (self.BACKOFF_FACTOR ** attempt)
+                        jitter = random.uniform(0, 3)
+                        wait_time = backoff_time + jitter
+                        
+                        self.logger.warning(
+                            f"Rate limited ({response.status}) on attempt {attempt + 1}, "
+                            f"waiting {wait_time:.2f}s"
+                        )
+                        
+                        # Reset session on rate limit
+                        if attempt > 1:
+                            await self.session.close()
+                            self.session = None
+                            await self.init_session()
+                            
+                        await asyncio.sleep(wait_time)
+                        continue
                     else:
-                        self.logger.warning(f"Failed with status {response.status}")
-            
+                        raise Exception(f"Unexpected status code: {response.status}")
+                        
             except asyncio.TimeoutError:
                 self.logger.warning(f"Timeout on attempt {attempt + 1}")
+                backoff_time = self.MIN_DELAY * (self.BACKOFF_FACTOR ** attempt)
+                await asyncio.sleep(backoff_time)
             except Exception as e:
-                self.logger.error(f"Error fetching {url}: {str(e)}")
-                if attempt == MAX_RETRIES - 1:
+                self.logger.error(f"Error on attempt {attempt + 1}: {str(e)}")
+                if attempt == self.MAX_RETRIES - 1:
                     raise
-            
-            await asyncio.sleep(DELAY * (2 ** attempt) + random.random() * 2)
+                await asyncio.sleep(self.MIN_DELAY * (self.BACKOFF_FACTOR ** attempt))
         
-        raise Exception(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
+        raise Exception(f"Failed to fetch {url} after {self.MAX_RETRIES} attempts")
+       
+    async def close_session(self):
+        """Close aiohttp session"""
+        if self.session:
+            await self.session.close()
+            self.session = None
 
     def extract_price(self, price_text: str) -> Optional[float]:
         """Extract numeric price from text"""
@@ -562,9 +616,9 @@ class BinaScraper:
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-        
+
     async def run(self, pages: int = 1) -> List[Dict]:
-        """Run scraper for specified number of pages"""
+        """Enhanced run method with better error handling and rate limiting"""
         try:
             start_time = time.time()
             self.logger.info("Starting Bina.az scraper")
@@ -579,7 +633,6 @@ class BinaScraper:
                 try:
                     self.logger.info(f"Processing page {page}/{pages}")
                     
-                    # Get page HTML with the new URL
                     url = f"{self.LISTINGS_URL}?page={page}"
                     html = await self.get_page_content(url)
                     
@@ -588,99 +641,48 @@ class BinaScraper:
                         failed_pages.append(page)
                         continue
                     
-                    # Parse listings with automatic type detection
                     listings = await self.parse_listing_page(html)
                     self.logger.info(f"Found {len(listings)} listings on page {page}")
                     
-                    # Track success rate for this page
-                    successful_listings = 0
-                    
-                    # Get details for each listing
+                    # Process listings with enhanced error handling
                     for idx, listing in enumerate(listings, 1):
                         try:
                             self.logger.debug(f"Processing listing {idx}/{len(listings)} on page {page}")
-                            listing_start_time = time.time()
                             
-                            # Add delay between listings
-                            if idx > 1:  # Skip delay for first listing
-                                await asyncio.sleep(random.uniform(0.5, 1.5))
+                            # Reset session periodically
+                            if idx % 5 == 0:
+                                await self.session.close()
+                                self.session = None
+                                await self.init_session()
                             
-                            # Get detailed listing info
+                            # Add delay between listings with jitter
+                            delay = random.uniform(2, 4)
+                            await asyncio.sleep(delay)
+                            
                             detail_html = await self.get_page_content(listing['source_url'])
                             if not detail_html:
-                                self.logger.error(f"Empty HTML content for listing {listing['listing_id']}")
                                 failed_listings.append(listing['listing_id'])
                                 continue
                                 
                             detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
-                            
-                            # Validate and update listing type if needed
-                            if detail_data.get('title'):
-                                listing_type = listing.get('listing_type', 'sale')
-                                title_text = detail_data['title'].lower()
-                                price_text = str(detail_data.get('price', '')).lower()
-                                
-                                if '/ay' in price_text or 'aylıq' in title_text:
-                                    listing_type = 'monthly'
-                                elif '/gün' in price_text or 'günlük' in title_text:
-                                    listing_type = 'daily'
-                                
-                                detail_data['listing_type'] = listing_type
-                            
-                            # Combine listing data
-                            combined_data = {**listing, **detail_data}
-                            all_results.append(combined_data)
-                            successful_listings += 1
-                            
-                            # Log processing time for this listing
-                            listing_duration = time.time() - listing_start_time
-                            self.logger.debug(f"Listing {listing['listing_id']} processed in {listing_duration:.2f}s")
+                            all_results.append({**listing, **detail_data})
                             
                         except Exception as e:
-                            self.logger.error(f"Error processing listing {listing.get('listing_id', 'unknown')}: {str(e)}")
-                            failed_listings.append(listing.get('listing_id', 'unknown'))
+                            self.logger.error(f"Error processing listing {listing.get('listing_id')}: {str(e)}")
+                            failed_listings.append(listing.get('listing_id'))
                             continue
                     
-                    # Log page statistics
-                    page_duration = time.time() - page_start_time
-                    success_rate = (successful_listings / len(listings)) * 100 if listings else 0
-                    self.logger.info(
-                        f"Page {page} completed in {page_duration:.2f}s. "
-                        f"Success rate: {success_rate:.1f}% ({successful_listings}/{len(listings)})"
-                    )
-                    
+                    # Add longer delay between pages
+                    if page < pages:
+                        await asyncio.sleep(self.PAGE_DELAY + random.uniform(0, 5))
+                        
                 except Exception as e:
                     self.logger.error(f"Error processing page {page}: {str(e)}")
                     failed_pages.append(page)
                     continue
-                
-                # Add delay between pages
-                if page < pages:  # Skip delay after last page
-                    await asyncio.sleep(random.uniform(2, 4))
-            
-            # Calculate and log final statistics
-            total_duration = time.time() - start_time
-            success_rate = (len(all_results) / (len(all_results) + len(failed_listings))) * 100 if all_results or failed_listings else 0
-            
-            self.logger.info(
-                f"Scraping completed in {total_duration:.2f}s:\n"
-                f"- Total listings: {len(all_results)}\n"
-                f"- Success rate: {success_rate:.1f}%\n"
-                f"- Failed pages: {len(failed_pages)}\n"
-                f"- Failed listings: {len(failed_listings)}"
-            )
-            
-            if failed_pages:
-                self.logger.warning(f"Failed pages: {failed_pages}")
-            if failed_listings:
-                self.logger.warning(f"Number of failed listings: {len(failed_listings)}")
             
             return all_results
             
-        except Exception as e:
-            self.logger.error(f"Fatal error in scraper: {str(e)}", exc_info=True)
-            raise
-            
         finally:
-            self.logger.info("Closing scraper session")
             await self.close_session()
+     
