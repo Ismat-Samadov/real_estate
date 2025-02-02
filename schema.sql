@@ -68,3 +68,6 @@ ALTER TABLE properties
 
 ALTER TABLE properties
 MODIFY updated_at TIMESTAMP NULL;
+
+ALTER TABLE properties 
+    DROP INDEX unique_listing;

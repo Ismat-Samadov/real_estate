@@ -19,7 +19,7 @@ class TelegramReporter:
         minutes = int(seconds // 60)
         remaining_seconds = seconds % 60
         return f"{minutes}m {remaining_seconds:.1f}s"
-    
+     
     async def send_report(self, scraper_stats: Dict, db_stats: Dict, listings: List[Dict] = None) -> None:
         try:
             # Create report header with timestamp
@@ -34,29 +34,23 @@ class TelegramReporter:
 
             # Per-Website Statistics
             total_scraped = 0
-            total_duplicates = 0
-            total_new = 0
+            total_inserted = 0
             total_failed = 0
 
             for website in sorted(scraper_stats['success_count'].keys()):
                 scraped = scraper_stats['success_count'][website]
-                total_scraped += scraped
-                
                 website_stats = db_stats['website_stats'].get(website, {})
-                new = website_stats.get('new', 0)
-                duplicates = website_stats.get('duplicates', 0)
+                inserted = website_stats.get('new', 0)
                 failed = website_stats.get('failed', 0)
-                processed = website_stats.get('total_processed', scraped)  # Fallback to scraped count
+                processed = website_stats.get('total_processed', scraped)
                 
-                total_new += new
-                total_duplicates += duplicates
+                total_scraped += scraped
+                total_inserted += inserted
                 total_failed += failed
                 
                 report += f"🌐 <b>{website}</b>\n"
                 report += f"├─ Listings Found: {processed:,}\n"
-                report += f"├─ New Records: {new:,}\n"
-                if duplicates > 0:
-                    report += f"├─ Duplicates: {duplicates:,}\n"
+                report += f"├─ Successfully Inserted: {inserted:,}\n"
                 if failed > 0:
                     report += f"├─ Failed: {failed:,}\n"
                 
@@ -76,7 +70,7 @@ class TelegramReporter:
                 # Success rate calculation
                 report += "└─ Success Rate: "
                 if processed > 0:
-                    success_rate = ((new + duplicates) / processed) * 100
+                    success_rate = (inserted / processed) * 100
                     report += f"{success_rate:.1f}%"
                 else:
                     report += "N/A"
@@ -84,17 +78,14 @@ class TelegramReporter:
 
             # Overall Summary
             report += "📊 <b>Final Summary</b>\n"
-            total_processed = db_stats.get('total_processed', total_scraped)  # Fallback to scraped count
-            report += f"├─ Total Listings Found: {total_processed:,}\n"
-            report += f"├─ New Records Added: {total_new:,}\n"
-            if total_duplicates > 0:
-                report += f"├─ Duplicate Records: {total_duplicates:,}\n"
+            report += f"├─ Total Listings Found: {total_scraped:,}\n"
+            report += f"├─ Successfully Inserted: {total_inserted:,}\n"
             if total_failed > 0:
-                report += f"├─ Failed Operations: {total_failed:,}\n"
+                report += f"├─ Failed Insertions: {total_failed:,}\n"
             
             # Overall success rate
-            if total_processed > 0:
-                overall_success_rate = ((total_new + total_duplicates) / total_processed) * 100
+            if total_scraped > 0:
+                overall_success_rate = (total_inserted / total_scraped) * 100
                 report += f"└─ Overall Success Rate: {overall_success_rate:.1f}%"
 
             await self.bot.send_message(
@@ -103,14 +94,6 @@ class TelegramReporter:
                 parse_mode='HTML'
             )
 
-        except ChatMigrated as e:
-            self.logger.warning(f"Chat migrated to new ID: {e.new_chat_id}")
-            self.chat_id = str(e.new_chat_id)
-            await self.bot.send_message(
-                chat_id=self.chat_id,
-                text=report,
-                parse_mode='HTML'
-            )
         except Exception as e:
             self.logger.error(f"Error sending Telegram report: {str(e)}", exc_info=True)
             raise
