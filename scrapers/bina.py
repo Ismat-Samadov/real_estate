@@ -1,8 +1,6 @@
-# bina.py file contains the scraper class for bina.az real estate listings
 import asyncio
 import aiohttp
 import random
-import os
 from bs4 import BeautifulSoup
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -20,12 +18,13 @@ class OptimizedBinaScraper:
     LISTINGS_URL = "https://bina.az/items/all"
     
     def __init__(self, max_concurrent: int = 5):
+        """Initialize the scraper with configuration"""
         self.logger = logging.getLogger(__name__)
         self.session = None
         self.proxy_url = None
         self.semaphore = Semaphore(max_concurrent)
-        self.last_request_time = 0
         self.request_count = 0
+        self.last_request_time = 0
         
         # Maintain original delay parameters with slight optimization
         self.min_delay = 0.3  # Slightly reduced but still safe
@@ -62,7 +61,7 @@ class OptimizedBinaScraper:
             
             connector = aiohttp.TCPConnector(
                 ssl=False,
-                limit=8,  # Balanced connection pool
+                limit=8,
                 ttl_dns_cache=300,
                 force_close=True,
                 enable_cleanup_closed=True
@@ -83,6 +82,12 @@ class OptimizedBinaScraper:
                 cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
 
+    async def close_session(self):
+        """Close aiohttp session"""
+        if self.session:
+            await self.session.close()
+            self.session = None
+
     async def _smart_delay(self):
         """Implement adaptive delay while maintaining site courtesy"""
         now = time.time()
@@ -98,63 +103,54 @@ class OptimizedBinaScraper:
         self.last_request_time = time.time()
         self.request_count += 1
 
-    async def close_session(self):
-        """Close aiohttp session"""
-        if self.session:
-            await self.session.close()
-            self.session = None
-
-    def extract_price(self, price_text: str) -> Optional[float]:
-        """Extract numeric price from text"""
-        if not price_text:
-            return None
-        try:
-            # Remove all non-numeric characters
-            price = re.sub(r'[^\d.]', '', price_text)
-            return float(price) if price else None
-        except (ValueError, TypeError):
-            return None
-
-    def extract_floor_info(self, text: str) -> Tuple[Optional[int], Optional[int]]:
-        """Extract floor and total floors from text"""
-        if not text:
-            return None, None
+    async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
+        """Fetch page content with original headers and enhanced retry logic"""
+        async with self.semaphore:
+            for attempt in range(3):
+                try:
+                    await self._smart_delay()
+                    
+                    headers = {
+                        'Referer': 'https://bina.az/',
+                        'Origin': 'https://bina.az',
+                        'Host': 'bina.az',
+                        'User-Agent': self._get_random_user_agent()
+                    }
+                    
+                    cookies = {
+                        'language': 'az',
+                        '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                        '_gid': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                    }
+                    
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers={**self.session.headers, **headers},
+                        cookies=cookies,
+                        proxy=self.proxy_url,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        verify_ssl=False
+                    ) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        elif response.status in [403, 429]:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                except Exception as e:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(1)
             
-        try:
-            # Handle formats like "5/9" or "5 / 9"
-            parts = text.split('/')
-            if len(parts) == 2:
-                floor = int(re.search(r'\d+', parts[0]).group())
-                total = int(re.search(r'\d+', parts[1]).group())
-                return floor, total
-        except (AttributeError, ValueError, IndexError):
-            pass
-            
-        return None, None
-
-    def detect_listing_type(self, title: Optional[str], base_type: str) -> str:
-        """Detect specific listing type from title"""
-        if not title:
-            return base_type
-            
-        title_lower = title.lower()
-        if base_type == 'monthly':
-            if 'günlük' in title_lower:
-                return 'daily'
-            return 'monthly'
-        return 'sale'
+            raise Exception(f"Failed to fetch {url}")
 
     async def parse_listing_page(self, html: str) -> List[Dict]:
-        """Parse the listings page to extract basic listing info with listing type detection"""
+        """Parse the listings page to extract basic listing info"""
         listings = []
         soup = BeautifulSoup(html, 'lxml')
         
-        self.logger.debug("Parsing listings page")
-        
-        # Find all listing cards
         for listing in soup.select('.items_list .items-i'):
             try:
-                # Extract listing URL and ID
                 listing_id = listing.get('data-item-id')
                 link = listing.select_one('a.item_link')
                 
@@ -163,7 +159,7 @@ class OptimizedBinaScraper:
                     
                 listing_url = urljoin(self.BASE_URL, link.get('href', ''))
                 
-                # Extract price and detect listing type
+                # Extract price
                 price = None
                 listing_type = 'sale'  # Default type
                 
@@ -173,7 +169,6 @@ class OptimizedBinaScraper:
                 if price_elem:
                     price = self.extract_price(price_elem.text.strip())
                     
-                    # Detect listing type from price format
                     if price_container:
                         price_text = price_container.text.strip().lower()
                         if '/ay' in price_text or '/aylıq' in price_text:
@@ -185,7 +180,6 @@ class OptimizedBinaScraper:
                 title_elem = listing.select_one('.card-title')
                 title = title_elem.text.strip() if title_elem else None
                 
-                # Basic data from listing card
                 listing_data = {
                     'listing_id': listing_id,
                     'source_url': listing_url,
@@ -203,116 +197,33 @@ class OptimizedBinaScraper:
                     listing_data['location'] = location.text.strip()
                 
                 # Extract property details
-                name_items = listing.select('.name li')
-                for item in name_items:
+                for item in listing.select('.name li'):
                     text = item.text.strip().lower()
                     
-                    # Extract room count
                     if 'otaq' in text:
-                        try:
-                            rooms = int(re.search(r'\d+', text).group())
-                            if 1 <= rooms <= 20:  # Reasonable validation
-                                listing_data['rooms'] = rooms
-                        except (ValueError, AttributeError):
-                            pass
-                            
-                    # Extract area
+                        rooms = re.search(r'\d+', text)
+                        if rooms:
+                            listing_data['rooms'] = int(rooms.group())
                     elif 'm²' in text:
-                        try:
-                            area = float(re.sub(r'[^\d.]', '', text))
-                            if 5 <= area <= 1000:  # Reasonable validation
-                                listing_data['area'] = area
-                        except ValueError:
-                            pass
-                            
-                    # Extract floor info
+                        area = re.search(r'\d+', text)
+                        if area:
+                            listing_data['area'] = float(area.group())
                     elif 'mərtəbə' in text:
-                        floor, total_floors = self.extract_floor_info(text)
-                        if floor is not None and 0 <= floor <= 100:  # Reasonable validation
-                            listing_data['floor'] = floor
-                        if total_floors is not None and 1 <= total_floors <= 100:  # Reasonable validation
-                            listing_data['total_floors'] = total_floors
-                
-                # Extract repair status and other features
-                features = []
-                if listing.select_one('.repair'):
-                    listing_data['has_repair'] = True
-                    features.append('təmirli')
-                
-                if listing.select_one('.bill_of_sale'):
-                    features.append('kupçalı')
-                    
-                if listing.select_one('.mortgage'):
-                    features.append('ipoteka var')
-                
-                # Extract property type from listing
-                property_type_elem = listing.select_one('.name')
-                if property_type_elem:
-                    property_text = property_type_elem.text.strip().lower()
-                    if 'köhnə tikili' in property_text:
-                        listing_data['property_type'] = 'old'
-                    elif 'yeni tikili' in property_text:
-                        listing_data['property_type'] = 'new'
-                    elif 'həyət evi' in property_text or 'villa' in property_text:
-                        listing_data['property_type'] = 'house'
-                    elif 'ofis' in property_text:
-                        listing_data['property_type'] = 'office'
-                    elif 'qaraj' in property_text:
-                        listing_data['property_type'] = 'garage'
-                    elif 'torpaq' in property_text:
-                        listing_data['property_type'] = 'land'
-                    else:
-                        listing_data['property_type'] = 'apartment'
-                
-                # Extract metro station and district from location
-                location_text = listing_data.get('location', '').lower()
-                if location_text:
-                    # Extract metro station
-                    if 'm.' in location_text:
-                        metro_parts = location_text.split('m.')
-                        if len(metro_parts) > 1:
-                            listing_data['metro_station'] = metro_parts[1].split(',')[0].strip()
-                    
-                    # Extract district
-                    if 'r.' in location_text:
-                        district_parts = location_text.split('r.')
-                        if len(district_parts) > 1:
-                            listing_data['district'] = district_parts[0].strip()
-                
-                if features:
-                    listing_data['amenities'] = json.dumps(features)
+                        floor_match = re.search(r'(\d+)/(\d+)', text)
+                        if floor_match:
+                            listing_data['floor'] = int(floor_match.group(1))
+                            listing_data['total_floors'] = int(floor_match.group(2))
                 
                 listings.append(listing_data)
                 
             except Exception as e:
-                self.logger.error(f"Error parsing listing card {listing_id if listing_id else 'unknown'}: {str(e)}")
+                self.logger.error(f"Error parsing listing card: {str(e)}")
                 continue
         
         return listings
-        
-    def validate_coordinates(self, lat: float, lon: float) -> Tuple[Optional[float], Optional[float]]:
-        """
-        Validate and format coordinates to match database schema constraints
-        DECIMAL(10,8) means max 10 digits total with 8 after decimal point
-        Valid range for coordinates:
-        Latitude: -90 to 90
-        Longitude: -180 to 180
-        """
-        try:
-            if lat is not None and lon is not None:
-                # Check if coordinates are within valid ranges
-                if -90 <= lat <= 90 and -180 <= lon <= 180:
-                    # Format to 8 decimal places to match schema
-                    return (
-                        round(float(lat), 8),
-                        round(float(lon), 8)
-                    )
-            return None, None
-        except (ValueError, TypeError):
-            return None, None
- 
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse detailed listing page and fetch phone numbers"""
+        """Parse detailed listing page"""
         soup = BeautifulSoup(html, 'lxml')
         
         try:
@@ -322,7 +233,7 @@ class OptimizedBinaScraper:
                 'updated_at': datetime.datetime.now()
             }
             
-            # Extract title and description first
+            # Extract title and description
             title = soup.select_one('h1.product-title')
             if title:
                 data['title'] = title.text.strip()
@@ -331,131 +242,190 @@ class OptimizedBinaScraper:
             if desc:
                 data['description'] = desc.text.strip()
             
-            # Extract property type from properties section
-            property_items = soup.select('.product-properties__i')
-            for item in property_items:
-                label = item.select_one('.product-properties__i-name')
-                value = item.select_one('.product-properties__i-value')
-                if label and value:
-                    label_text = label.text.strip().lower()
-                    value_text = value.text.strip().lower()
-                    
-                    if 'kateqoriya' in label_text:
-                        if 'köhnə tikili' in value_text:
-                            data['property_type'] = 'old'
-                        elif 'yeni tikili' in value_text:
-                            data['property_type'] = 'new'
-                        elif 'həyət evi' in value_text or 'villa' in value_text:
-                            data['property_type'] = 'house'
-                        elif 'ofis' in value_text:
-                            data['property_type'] = 'office'
-                        elif 'qaraj' in value_text:
-                            data['property_type'] = 'garage'
-                        elif 'torpaq' in value_text:
-                            data['property_type'] = 'land'
-                        else:
-                            data['property_type'] = 'apartment'
-            
-            # Extract timestamps and views from statistics section
-            stats_container = soup.select_one('.product-statistics')
-            if stats_container:
-                for stat in stats_container.select('.product-statistics__i-text'):
-                    text = stat.text.strip()
-                    if text:
-                        if 'Baxışların sayı:' in text:
-                            try:
-                                # Extract number after colon
-                                views = int(text.split(':')[1].strip())
-                                data['views_count'] = views
-                            except (ValueError, IndexError):
-                                pass
-                        elif 'Yeniləndi:' in text:
-                            try:
-                                # Extract and parse date after colon
-                                date_str = text.split('Yeniləndi:')[1].strip()
-                                # Parse the date and time
-                                parsed_datetime = datetime.datetime.strptime(date_str, '%d.%m.%Y, %H:%M')
-                                data['listing_date'] = parsed_datetime.date()
-                                data['updated_at'] = parsed_datetime
-                            except (ValueError, IndexError) as e:
-                                self.logger.warning(f"Failed to parse date from: {text}, error: {str(e)}")
-            # Extract contact type from owner info
-            owner_info = soup.select_one('.product-owner__info')
-            if owner_info:
-                contact_region = owner_info.select_one('.product-owner__info-region')
-                if contact_region:
-                    data['contact_type'] = contact_region.text.strip()
-                contact_name = owner_info.select_one('.product-owner__info-name')
-                if contact_name:
-                    data['contact_name'] = contact_name.text.strip()
+            # Extract property details
+            for prop in soup.select('.product-properties__i'):
+                label = prop.select_one('.product-properties__i-name')
+                value = prop.select_one('.product-properties__i-value')
                 
-            # Extract coordinates if available
+                if not label or not value:
+                    continue
+                    
+                label_text = label.text.strip().lower()
+                value_text = value.text.strip()
+                
+                if any(word in label_text for word in ['kateqoriya', 'kategoriya']):
+                    property_type = value_text.lower()
+                    if 'köhnə tikili' in property_type:
+                        data['property_type'] = 'old'
+                    elif 'yeni tikili' in property_type:
+                        data['property_type'] = 'new'
+                    elif any(word in property_type for word in ['həyət evi', 'villa']):
+                        data['property_type'] = 'house'
+                    else:
+                        data['property_type'] = 'apartment'
+            
+            # Extract location info
+            address = soup.select_one('.product-map__left__address')
+            if address:
+                data['address'] = address.text.strip()
+            
+            # Extract metro and district
+            for link in soup.select('.product-extras__i a'):
+                text = link.text.strip()
+                if 'm.' in text.lower():
+                    data['metro_station'] = text.replace('m.', '').strip()
+                elif 'r.' in text.lower():
+                    data['district'] = text.replace('r.', '').strip()
+            
+            # Extract coordinates
             map_elem = soup.select_one('#item_map')
             if map_elem:
                 try:
-                    raw_lat = float(map_elem.get('data-lat', 0))
-                    raw_lon = float(map_elem.get('data-lng', 0))
-                    lat, lon = self.validate_coordinates(raw_lat, raw_lon)
-                    if lat is not None and lon is not None:
-                        data['latitude'] = lat
-                        data['longitude'] = lon
-                except (ValueError, TypeError, AttributeError):
-                    self.logger.warning(f"Invalid coordinates for listing {listing_id}")
+                    data['latitude'] = float(map_elem.get('data-lat', 0))
+                    data['longitude'] = float(map_elem.get('data-lng', 0))
+                except (ValueError, TypeError):
+                    pass
             
-            # Extract location info
-            address_elem = soup.select_one('.product-map__left__address')
-            if address_elem:
-                data['address'] = address_elem.text.strip()
-
-            # Extract metro station and district
-            location_extras = soup.select('.product-extras__i a')
-            for extra in location_extras:
-                text = extra.text.strip()
-                href = extra.get('href', '').lower()
-                # Check for metro station (ending with 'm.')
-                if text.lower().endswith('m.'):
-                    data['metro_station'] = text.replace('m.', '').strip()
-                # Or if it contains 'metro' in the text
-                elif 'metro' in text.lower():
-                    data['metro_station'] = text.replace('metro', '').strip()
-
-                # Extract district
-                elif 'r.' in text.lower():
-                    district = text.replace('r.', '').strip()
-                    data['district'] = district.split()[0] if district else None
-                else:
-                    data['location'] = text
-            
-            # Extract phone numbers and WhatsApp availability
-            phones = await self.get_phone_numbers(listing_id)
-            if phones:
-                data['contact_phone'] = phones[0] if phones else None
-                data['whatsapp_available'] = bool(soup.select_one('.wp_status_ico'))
+            # Extract amenities
+            amenities = []
+            for amenity in soup.select('.product-extras__i-value'):
+                amenities.append(amenity.text.strip())
+            if amenities:
+                data['amenities'] = json.dumps(amenities)
             
             # Extract photos
             photos = []
-            photo_elems = soup.select('.product-photos__slider-top img[src]')
-            for img in photo_elems:
+            for img in soup.select('.product-photos__slider-top img[src]'):
                 src = img.get('src')
                 if src and not src.endswith('load.gif'):
                     photos.append(src)
             if photos:
                 data['photos'] = json.dumps(photos)
             
-            # Extract features/amenities
-            features = []
-            if soup.select_one('.repair'):
-                features.append('təmirli')
-                data['has_repair'] = True
-            if soup.select_one('.bill_of_sale'):
-                features.append('kupçalı')
-            if soup.select_one('.mortgage'):
-                features.append('ipoteka var')
-            if features:
-                data['amenities'] = json.dumps(features)
-            
             return data
             
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
+
+    def extract_price(self, price_text: str) -> Optional[float]:
+        """Extract numeric price from text"""
+        if not price_text:
+            return None
+        try:
+            price = re.sub(r'[^\d.]', '', price_text)
+            return float(price) if price else None
+        except (ValueError, TypeError):
+            return None
+
+    async def get_phone_numbers(self, listing_id: str) -> List[str]:
+        """Fetch phone numbers with exact API requirements"""
+        try:
+            source_link = f"https://bina.az/items/{listing_id}"
+            url = f"https://bina.az/items/{listing_id}/phones"
+            
+            headers = {
+                'authority': 'bina.az',
+                'accept': 'application/json, text/javascript, */*; q=0.01',
+                'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
+                'dnt': '1',
+                'referer': source_link,
+                'sec-ch-ua': '"Not A(Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"macOS"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'user-agent': self._get_random_user_agent(),
+                'x-requested-with': 'XMLHttpRequest'
+            }
+
+            async with self.session.get(source_link, proxy=self.proxy_url, headers=headers) as response:
+                if response.status == 200:
+                    html = await response.text()
+                    soup = BeautifulSoup(html, 'lxml')
+                    csrf_meta = soup.select_one('meta[name="csrf-token"]')
+                    if csrf_meta:
+                        headers['x-csrf-token'] = csrf_meta.get('content')
+
+            params = {
+                'source_link': source_link,
+                'trigger_button': 'main'
+            }
+
+            async with self.session.get(
+                url,
+                params=params,
+                headers=headers,
+                proxy=self.proxy_url,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get('phones', [])
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"Error fetching phones for listing {listing_id}: {str(e)}")
+            return []
+
+    async def process_listing_batch(self, listings: List[Dict]) -> List[Dict]:
+        """Process listings in batches while maintaining data integrity"""
+        tasks = []
+        for listing in listings:
+            task = asyncio.create_task(self._process_single_listing(listing))
+            tasks.append(task)
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [r for r in results if isinstance(r, dict)]
+
+    async def _process_single_listing(self, listing: Dict) -> Optional[Dict]:
+        """Process single listing with all original data extraction"""
+        try:
+            detail_html = await self.get_page_content(listing['source_url'])
+            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+            
+            # Get phone numbers
+            phones = await self.get_phone_numbers(listing['listing_id'])
+            if phones:
+                detail_data['contact_phone'] = phones[0]
+            
+            return {**listing, **detail_data}
+        except Exception as e:
+            self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
+            return None
+
+    async def run(self, pages: int = 1) -> List[Dict]:
+        """Run scraper with optimized concurrent processing"""
+        all_results = []
+        try:
+            await self.init_session()
+            
+            for page in range(1, pages + 1):
+                try:
+                    url = f"{self.LISTINGS_URL}?page={page}"
+                    html = await self.get_page_content(url)
+                    listings = await self.parse_listing_page(html)
+                    
+                    # Process listings in batches
+                    for i in range(0, len(listings), self.batch_size):
+                        batch = listings[i:i + self.batch_size]
+                        results = await self.process_listing_batch(batch)
+                        all_results.extend([r for r in results if r])
+                        
+                        # Add delay between batches
+                        if i + self.batch_size < len(listings):
+                            await asyncio.sleep(0.5)
+                    
+                    # Add delay between pages
+                    if page < pages:
+                        await asyncio.sleep(1.0)
+                    
+                except Exception as e:
+                    self.logger.error(f"Error processing page {page}: {str(e)}")
+                    continue
+            
+            return all_results
+            
+        finally:
+            await self.close_session()

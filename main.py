@@ -114,7 +114,6 @@ def debug_listing_data(listing: Dict, listing_id: str) -> None:
         if field in listing:
             logger.debug(f"{field}: {type(listing[field])} = {listing[field]}")
 
-
 def validate_numeric_field(value: any, field_name: str, min_val: float = None, max_val: float = None) -> Optional[float]:
     """Validate and convert numeric fields with enhanced precision handling"""
     logger = logging.getLogger(__name__)
