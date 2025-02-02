@@ -145,7 +145,7 @@ class OptimizedBinaScraper:
             raise Exception(f"Failed to fetch {url}")
 
     async def parse_listing_page(self, html: str) -> List[Dict]:
-        """Parse the listings page to extract basic listing info"""
+        """Parse the listings page"""
         listings = []
         soup = BeautifulSoup(html, 'lxml')
         
@@ -159,26 +159,21 @@ class OptimizedBinaScraper:
                     
                 listing_url = urljoin(self.BASE_URL, link.get('href', ''))
                 
-                # Extract price
+                # Extract price and listing type
                 price = None
-                listing_type = 'sale'  # Default type
+                listing_type = 'sale'
                 
                 price_elem = listing.select_one('.price-val')
                 price_container = listing.select_one('.price-per')
                 
                 if price_elem:
                     price = self.extract_price(price_elem.text.strip())
-                    
                     if price_container:
                         price_text = price_container.text.strip().lower()
                         if '/ay' in price_text or '/aylıq' in price_text:
                             listing_type = 'monthly'
                         elif '/gün' in price_text or '/günlük' in price_text:
                             listing_type = 'daily'
-                
-                # Extract title
-                title_elem = listing.select_one('.card-title')
-                title = title_elem.text.strip() if title_elem else None
                 
                 listing_data = {
                     'listing_id': listing_id,
@@ -187,9 +182,13 @@ class OptimizedBinaScraper:
                     'price': price,
                     'currency': 'AZN',
                     'listing_type': listing_type,
-                    'created_at': datetime.datetime.now(),
-                    'title': title
+                    'created_at': datetime.datetime.now()
                 }
+                
+                # Extract title
+                title = listing.select_one('.card-title')
+                if title:
+                    listing_data['title'] = title.text.strip()
                 
                 # Extract location
                 location = listing.select_one('.location')
@@ -241,8 +240,47 @@ class OptimizedBinaScraper:
             desc = soup.select_one('.product-description__content')
             if desc:
                 data['description'] = desc.text.strip()
+                
+            # Extract listing date and views from statistics
+            stats = soup.select_one('.product-statistics')
+            if stats:
+                for stat in stats.select('.product-statistics__i-text'):
+                    text = stat.text.strip()
+                    if 'Yeniləndi:' in text:
+                        try:
+                            # Parse date time format: "dd.mm.yyyy, HH:MM"
+                            date_str = text.split('Yeniləndi:')[1].strip()
+                            parsed_date = datetime.datetime.strptime(date_str, '%d.%m.%Y, %H:%M')
+                            data['listing_date'] = parsed_date.date()
+                            data['updated_at'] = parsed_date
+                        except (ValueError, IndexError):
+                            pass
+                    elif 'Baxışların sayı:' in text:
+                        try:
+                            views = int(re.search(r'\d+', text.split(':')[1]).group())
+                            data['views_count'] = views
+                        except (ValueError, AttributeError):
+                            pass
+
+            # Extract contact type with more detail
+            owner_info = soup.select_one('.product-owner__info')
+            if owner_info:
+                name_elem = owner_info.select_one('.product-owner__info-name')
+                region_elem = owner_info.select_one('.product-owner__info-region')
+                
+                if name_elem:
+                    contact_name = name_elem.text.strip()
+                    if contact_name:
+                        data['contact_name'] = contact_name
+                
+                if region_elem:
+                    contact_type = region_elem.text.strip()
+                    if 'vasitəçi' in contact_type.lower() or 'agent' in contact_type.lower():
+                        data['contact_type'] = 'agent'
+                    else:
+                        data['contact_type'] = 'owner'
             
-            # Extract property details
+            # Extract property type
             for prop in soup.select('.product-properties__i'):
                 label = prop.select_one('.product-properties__i-name')
                 value = prop.select_one('.product-properties__i-value')
@@ -286,12 +324,47 @@ class OptimizedBinaScraper:
                 except (ValueError, TypeError):
                     pass
             
-            # Extract amenities
+            # Extract amenities with full details
             amenities = []
-            for amenity in soup.select('.product-extras__i-value'):
-                amenities.append(amenity.text.strip())
+            
+            # Check repair status
+            repair_status = soup.select_one('.repair')
+            if repair_status:
+                data['has_repair'] = True
+                amenities.append('təmirli')
+            
+            # Extract all features
+            features = []
+            # Check property features
+            for feature in soup.select('.product-extras__i'):
+                feature_text = feature.text.strip()
+                if feature_text:
+                    features.append(feature_text)
+            
+            # Check additional property info
+            for extra in soup.select('.product-properties__i'):
+                name = extra.select_one('.product-properties__i-name')
+                value = extra.select_one('.product-properties__i-value')
+                if name and value:
+                    name_text = name.text.strip()
+                    value_text = value.text.strip()
+                    if name_text and value_text:
+                        features.append(f"{name_text}: {value_text}")
+            
+            # Add any bill_of_sale or mortgage features
+            bill_of_sale = soup.select_one('.bill_of_sale')
+            if bill_of_sale:
+                features.append('kupçalı')
+                
+            mortgage = soup.select_one('.mortgage')
+            if mortgage:
+                features.append('ipoteka var')
+            
+            # Combine all features
+            amenities.extend(features)
+            
             if amenities:
-                data['amenities'] = json.dumps(amenities)
+                data['amenities'] = json.dumps(list(set(amenities)))
             
             # Extract photos
             photos = []
@@ -299,6 +372,7 @@ class OptimizedBinaScraper:
                 src = img.get('src')
                 if src and not src.endswith('load.gif'):
                     photos.append(src)
+            
             if photos:
                 data['photos'] = json.dumps(photos)
             
