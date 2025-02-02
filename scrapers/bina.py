@@ -18,9 +18,9 @@ class BinaScraper:
     LISTINGS_URL = "https://bina.az/items/all"
     
     # New constants for rate limiting
-    MIN_DELAY = 3  # Minimum delay between requests
-    MAX_DELAY = 7  # Maximum delay between requests
-    PAGE_DELAY = 10  # Delay between pages
+    MIN_DELAY = 0.5  # Minimum delay between requests
+    MAX_DELAY = 1.5  # Maximum delay between requests
+    PAGE_DELAY = 5  # Delay between pages
     MAX_RETRIES = 5  # Maximum number of retries per request
     BACKOFF_FACTOR = 2  # Exponential backoff multiplier
     
@@ -71,10 +71,10 @@ class BinaScraper:
             
             # Enhanced timeout settings
             timeout = aiohttp.ClientTimeout(
-                total=30,
-                connect=10,
-                sock_read=10,
-                sock_connect=10
+                total=10,
+                connect=3,
+                sock_read=3,
+                sock_connect=4
             )
             
             self.session = aiohttp.ClientSession(
@@ -93,9 +93,9 @@ class BinaScraper:
         # Calculate delay based on request count
         base_delay = random.uniform(self.MIN_DELAY, self.MAX_DELAY)
         if self.request_count > 10:
-            base_delay *= 1.5
+            base_delay *= 1.67
         if self.request_count > 20:
-            base_delay *= 2
+            base_delay *= 1.78
             
         # Ensure minimum time between requests
         if time_since_last < base_delay:
@@ -124,7 +124,7 @@ class BinaScraper:
                     'language': 'az',
                     '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
                     '_gid': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
-                    '__cf_bm': f'{random.randbytes(32).hex()}',  # Simulate Cloudflare cookie
+                    '__cf_bm': f'{random.randbytes(32).hex()}',  # it is a just simulating a Cloudflare cookie, nothin more, nothing less
                 }
                 
                 async with self.session.get(
@@ -390,7 +390,7 @@ class BinaScraper:
         """Fetch phone numbers with exact API requirements"""
         try:
             # Add delay before phone request
-            await asyncio.sleep(random.uniform(5, 8))
+            await asyncio.sleep(random.uniform(1, 1.444))
             
             # Construct exact URL with query parameters
             source_link = f"https://bina.az/items/{listing_id}"
@@ -451,7 +451,7 @@ class BinaScraper:
                             cookies[key] = morsel.value
 
             # Now make the phone API request
-            MAX_RETRIES = 3
+            MAX_RETRIES = 2
             for attempt in range(MAX_RETRIES):
                 try:
                     async with self.session.get(
@@ -469,7 +469,7 @@ class BinaScraper:
                             self.logger.debug(f"Successfully got phones for listing {listing_id}: {phones}")
                             return phones
                         elif response.status in [403, 429]:
-                            retry_delay = 15 * (2 ** attempt) + random.uniform(5, 10)
+                            retry_delay = 5 * (2 ** attempt) + random.uniform(1, 1.42)
                             self.logger.warning(
                                 f"Rate limited ({response.status}) for phone API on listing {listing_id}. "
                                 f"Waiting {retry_delay}s"
