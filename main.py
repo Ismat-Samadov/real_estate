@@ -8,7 +8,7 @@ from scrapers.arenda import OptimizedArendaScraper
 from scrapers.ev10 import EV10Scraper
 from scrapers.yeniemlak import YeniEmlakScraper
 from scrapers.emlak import EmlakAzScraper
-from scrapers.bina import BinaScraper
+from scrapers.bina import OptimizedBinaScraper
 from scrapers.ipoteka import IpotekaScraper
 from scrapers.unvan import UnvanScraper
 from scrapers.vipemlak import VipEmlakScraper
