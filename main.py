@@ -498,7 +498,7 @@ async def run_scrapers():
             
         # Match website names with page_config
         scrapers = [
-            ("bina.az", BinaScraper()),
+            ("bina.az", OptimizedBinaScraper()),
             # ("arenda.az", OptimizedArendaScraper()),
             # ("ev10.az", EV10Scraper()),
             # ("yeniemlak.az", YeniEmlakScraper()),
