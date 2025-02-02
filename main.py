@@ -337,6 +337,7 @@ def validate_listing_data(listing: Dict) -> Dict:
 
     return validated
 
+  
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
     """Save listings to database with enhanced tracking of changes"""
     logger = logging.getLogger(__name__)
@@ -360,7 +361,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
         
-        # Check query includes source_website
+        # SQL queries
         check_query = """
             SELECT listing_id, price, title, description, views_count 
             FROM properties 
@@ -381,29 +382,39 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
             ON DUPLICATE KEY UPDATE
-                updated_at = VALUES(updated_at),
                 price = CASE 
-                    WHEN price != VALUES(price) THEN VALUES(price)
+                    WHEN COALESCE(price, 0) != COALESCE(VALUES(price), 0)
+                    THEN VALUES(price)
                     ELSE price
                 END,
                 title = CASE 
-                    WHEN title != VALUES(title) THEN VALUES(title)
+                    WHEN COALESCE(title, '') != COALESCE(VALUES(title), '')
+                    THEN VALUES(title)
                     ELSE title
                 END,
                 description = CASE 
-                    WHEN description != VALUES(description) THEN VALUES(description)
+                    WHEN COALESCE(description, '') != COALESCE(VALUES(description), '')
+                    THEN VALUES(description)
                     ELSE description
                 END,
                 views_count = CASE 
-                    WHEN views_count != VALUES(views_count) THEN VALUES(views_count)
+                    WHEN COALESCE(views_count, 0) != COALESCE(VALUES(views_count), 0)
+                    THEN VALUES(views_count)
                     ELSE views_count
+                END,
+                updated_at = CASE 
+                    WHEN COALESCE(price, 0) != COALESCE(VALUES(price), 0)
+                        OR COALESCE(title, '') != COALESCE(VALUES(title), '')
+                        OR COALESCE(description, '') != COALESCE(VALUES(description), '')
+                        OR COALESCE(views_count, 0) != COALESCE(VALUES(views_count), 0)
+                    THEN VALUES(updated_at)
+                    ELSE updated_at
                 END
         """
         
         for listing in listings:
             try:
                 sanitized = validate_listing_data(listing)
-                
                 if not sanitized or not sanitized.get('listing_id') or not sanitized.get('source_website'):
                     stats['failed'] += 1
                     stats['error_details']['invalid_data'] += 1
@@ -412,10 +423,11 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 listing_id = sanitized['listing_id']
                 website = sanitized['source_website']
                 
-                # Check if record exists using both listing_id and source_website
+                # Check if record exists
                 cursor.execute(check_query, (listing_id, website))
                 existing_record = cursor.fetchone()
                 
+                # Prepare insert values
                 values = (
                     listing_id,
                     sanitized.get('title'),
@@ -448,17 +460,8 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     sanitized.get('listing_date')
                 )
                 
-                cursor.execute(insert_query, values)
-                
                 if existing_record:
-                    # Track overall updates
-                    stats['successful_updates'] += 1
-                    stats['updated_listings'].add(listing_id)
-                    
-                    # Track website-specific updates
-                    stats['website_stats'][website]['updated'] += 1
-                    
-                    # Track which fields were updated
+                    fields_changed = False
                     fields_to_check = {
                         'price': (1, sanitized.get('price')),
                         'title': (2, sanitized.get('title')),
@@ -467,27 +470,35 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     }
                     
                     for field, (idx, new_value) in fields_to_check.items():
-                        if existing_record[idx] != new_value:
+                        old_value = existing_record[idx]
+                        # Compare values handling NULL
+                        if ((old_value is None) != (new_value is None)) or (old_value != new_value):
+                            fields_changed = True
                             stats['updated_fields'][field].add(listing_id)
                             stats['website_stats'][website]['updated_fields'][field] += 1
+                    
+                    if fields_changed:
+                        cursor.execute(insert_query, values)
+                        stats['successful_updates'] += 1
+                        stats['updated_listings'].add(listing_id)
+                        stats['website_stats'][website]['updated'] += 1
                 else:
-                    # Track overall inserts
+                    # New listing
+                    cursor.execute(insert_query, values)
                     stats['successful_inserts'] += 1
                     stats['new_listings'].add(listing_id)
-                    
-                    # Track website-specific inserts
                     stats['website_stats'][website]['new'] += 1
                 
+                # Commit every 50 records
                 if (stats['successful_inserts'] + stats['successful_updates']) % 50 == 0:
                     connection.commit()
-                    logger.debug(f"Committed batch. Inserts: {stats['successful_inserts']}, Updates: {stats['successful_updates']}")
                 
             except Exception as e:
                 stats['failed'] += 1
                 error_type = type(e).__name__
                 stats['error_details'][error_type] += 1
                 stats['website_stats'][website]['failed'] += 1
-                logger.error(f"Error saving listing {listing.get('listing_id')} from {website}: {str(e)}")
+                logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
                 continue
         
         # Final commit
@@ -496,25 +507,6 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         
         # Convert updated_fields sets to counts for the report
         stats['updated_fields'] = {k: len(v) for k, v in stats['updated_fields'].items()}
-        
-        # Log statistics
-        logger.info("Database operation completed:")
-        logger.info(f"New insertions: {stats['successful_inserts']}")
-        logger.info(f"Updated records: {stats['successful_updates']}")
-        logger.info(f"Failed operations: {stats['failed']}")
-        logger.info("Updated fields frequency:")
-        for field, count in stats['updated_fields'].items():
-            logger.info(f"- {field}: {count}")
-        
-        # Log website-specific stats
-        for website, website_stats in stats['website_stats'].items():
-            logger.info(f"\nStats for {website}:")
-            logger.info(f"New listings: {website_stats['new']}")
-            logger.info(f"Updated listings: {website_stats['updated']}")
-            logger.info(f"Failed operations: {website_stats['failed']}")
-            logger.info("Field updates:")
-            for field, count in website_stats['updated_fields'].items():
-                logger.info(f"- {field}: {count}")
         
         return stats
         
