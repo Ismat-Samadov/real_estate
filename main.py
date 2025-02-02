@@ -361,15 +361,19 @@ def validate_listing_data(listing: Dict) -> Dict:
     return validated
 
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
-    """Save listings to database - insert only mode"""
+    """Save listings to database - insert only mode with accurate statistics"""
     logger = logging.getLogger(__name__)
     stats = {
         'successful_inserts': 0,
+        'duplicates': 0,
         'failed': 0,
+        'total_processed': 0,  # New field to track actual number of listings
         'error_details': defaultdict(int),
         'website_stats': defaultdict(lambda: {
             'new': 0,
-            'failed': 0
+            'duplicates': 0,
+            'failed': 0,
+            'total_processed': 0  # Track per website as well
         })
     }
     
@@ -377,9 +381,9 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
         
-        # Insert query without update logic
+        # Insert query with explicit duplicate handling
         insert_query = """
-            INSERT IGNORE INTO properties (
+            INSERT INTO properties (
                 listing_id, title, description, metro_station, district,
                 address, location, latitude, longitude, rooms, area, 
                 floor, total_floors, property_type, listing_type, price, 
@@ -391,7 +395,12 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s
             )
+            ON DUPLICATE KEY UPDATE
+                id = id /* No updates, just prevent error */
         """
+        
+        # Keep track of processed listing IDs to avoid duplicates in the same batch
+        processed_listings = set()
         
         for listing in listings:
             try:
@@ -402,8 +411,19 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     continue
                 
                 website = sanitized['source_website']
+                stats['total_processed'] += 1
+                stats['website_stats'][website]['total_processed'] += 1
                 
-                # Insert values for new record
+                listing_key = f"{sanitized['listing_id']}-{website}"
+                if listing_key in processed_listings:
+                    stats['duplicates'] += 1
+                    stats['website_stats'][website]['duplicates'] += 1
+                    logger.debug(f"Skipping duplicate listing in batch: {listing_key}")
+                    continue
+                    
+                processed_listings.add(listing_key)
+                
+                # Prepare values for insert
                 values = (
                     sanitized.get('listing_id'),
                     sanitized.get('title'),
@@ -435,17 +455,26 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     sanitized.get('listing_date')
                 )
                 
-                cursor.execute(insert_query, values)
-                
-                # Track successful inserts based on cursor.rowcount
-                if cursor.rowcount > 0:
-                    stats['successful_inserts'] += 1
-                    stats['website_stats'][website]['new'] += 1
-                
-                # Commit every 50 records
-                if stats['successful_inserts'] % 50 == 0:
-                    connection.commit()
+                try:
+                    cursor.execute(insert_query, values)
+                    if cursor.rowcount > 0:
+                        stats['successful_inserts'] += 1
+                        stats['website_stats'][website]['new'] += 1
+                    else:
+                        stats['duplicates'] += 1
+                        stats['website_stats'][website]['duplicates'] += 1
                     
+                    # Commit every 50 successful inserts
+                    if stats['successful_inserts'] % 50 == 0:
+                        connection.commit()
+                        
+                except mysql.connector.IntegrityError as e:
+                    if 'Duplicate entry' in str(e):
+                        stats['duplicates'] += 1
+                        stats['website_stats'][website]['duplicates'] += 1
+                    else:
+                        raise
+                        
             except Exception as e:
                 stats['failed'] += 1
                 error_type = type(e).__name__
@@ -463,7 +492,6 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-
  
 async def run_scrapers():
     logger = logging.getLogger(__name__)
