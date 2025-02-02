@@ -206,7 +206,6 @@ def validate_coordinates(lat: Optional[float], lon: Optional[float]) -> Tuple[Op
         logger.error(f"Error validating coordinates: {str(e)}")
         return None, None
 
-
 def validate_listing_data(listing: Dict) -> Dict:
     """Validate and clean listing data before database insertion"""
     logger = logging.getLogger(__name__)
@@ -239,6 +238,7 @@ def validate_listing_data(listing: Dict) -> Dict:
                 try:
                     validated[field] = validated[field].decode('utf-8')
                 except UnicodeDecodeError:
+                    logger.warning(f"Failed to decode {field} value, setting to None")
                     validated[field] = None
                     continue
                     
@@ -252,13 +252,14 @@ def validate_listing_data(listing: Dict) -> Dict:
             else:
                 validated[field] = None
 
-    # Validate numeric fields
+    # Validate numeric fields with range checks
     try:
         if 'price' in validated:
             price = float(validated['price'])
             if 0 < price < 1000000000:  # Reasonable price range
                 validated['price'] = round(price, 2)
             else:
+                logger.warning(f"Price {price} outside valid range, removing")
                 validated.pop('price', None)
     except (ValueError, TypeError):
         validated.pop('price', None)
@@ -266,18 +267,21 @@ def validate_listing_data(listing: Dict) -> Dict:
     try:
         if 'area' in validated:
             area = float(validated['area'])
-            if 5 <= area <= 10000:  # Reasonable area range
+            if 5 <= area <= 10000:  # Reasonable area range in m²
                 validated['area'] = round(area, 2)
             else:
+                logger.warning(f"Area {area} outside valid range, removing")
                 validated.pop('area', None)
     except (ValueError, TypeError):
         validated.pop('area', None)
 
-    # Validate integer fields
+    # Validate integer fields with specific ranges
     for int_field in ['rooms', 'floor', 'total_floors', 'views_count']:
         if int_field in validated:
             try:
                 value = int(float(validated[int_field]))
+                
+                # Field-specific validation
                 if int_field == 'rooms' and 1 <= value <= 50:
                     validated[int_field] = value
                 elif int_field in ['floor', 'total_floors'] and 0 <= value <= 200:
@@ -285,8 +289,10 @@ def validate_listing_data(listing: Dict) -> Dict:
                 elif int_field == 'views_count' and value >= 0:
                     validated[int_field] = value
                 else:
+                    logger.warning(f"{int_field} value {value} outside valid range, removing")
                     validated.pop(int_field, None)
             except (ValueError, TypeError):
+                logger.warning(f"Invalid {int_field} value, removing")
                 validated.pop(int_field, None)
 
     # Validate coordinates
@@ -299,9 +305,11 @@ def validate_listing_data(listing: Dict) -> Dict:
                 validated['latitude'] = round(lat, 8)
                 validated['longitude'] = round(lon, 8)
             else:
+                logger.warning(f"Invalid coordinates: lat={lat}, lon={lon}, removing both")
                 validated.pop('latitude', None)
                 validated.pop('longitude', None)
         except (ValueError, TypeError):
+            logger.warning("Error converting coordinates, removing both")
             validated.pop('latitude', None)
             validated.pop('longitude', None)
 
@@ -313,6 +321,7 @@ def validate_listing_data(listing: Dict) -> Dict:
     # Validate listing type
     if 'listing_type' not in validated or validated['listing_type'] not in ['daily', 'monthly', 'sale']:
         validated['listing_type'] = 'sale'  # default value
+        logger.debug(f"Setting default listing_type='sale' for listing {validated.get('listing_id')}")
 
     # Validate JSON fields
     for json_field in ['amenities', 'photos']:
@@ -326,34 +335,41 @@ def validate_listing_data(listing: Dict) -> Dict:
                 else:
                     validated[json_field] = None
             except (ValueError, TypeError, json.JSONDecodeError):
+                logger.warning(f"Invalid {json_field} JSON, setting to None")
                 validated[json_field] = None
 
-    # Ensure timestamps are set
-    now = datetime.datetime.now()
+    # Set created_at timestamp
     if 'created_at' not in validated:
-        validated['created_at'] = now
-    if 'updated_at' not in validated:
-        validated['updated_at'] = now
+        validated['created_at'] = datetime.datetime.now()
+
+    # Remove updated_at if present
+    validated.pop('updated_at', None)
+
+    # Handle listing_date
+    if 'listing_date' in validated:
+        try:
+            if isinstance(validated['listing_date'], str):
+                validated['listing_date'] = datetime.datetime.strptime(validated['listing_date'], '%Y-%m-%d').date()
+            elif isinstance(validated['listing_date'], datetime.datetime):
+                validated['listing_date'] = validated['listing_date'].date()
+            elif not isinstance(validated['listing_date'], datetime.date):
+                validated['listing_date'] = None
+        except (ValueError, TypeError):
+            logger.warning("Invalid listing_date format, setting to None")
+            validated['listing_date'] = None
 
     return validated
 
-  
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
-    """Save listings to database with enhanced tracking of changes"""
+    """Save listings to database - insert only mode"""
     logger = logging.getLogger(__name__)
     stats = {
         'successful_inserts': 0,
-        'successful_updates': 0,
         'failed': 0,
         'error_details': defaultdict(int),
-        'updated_fields': defaultdict(lambda: set()),  # Track listing_ids per field
-        'new_listings': set(),  # Track new listing_ids
-        'updated_listings': set(),  # Track updated listing_ids
         'website_stats': defaultdict(lambda: {
             'new': 0,
-            'updated': 0,
-            'failed': 0,
-            'updated_fields': defaultdict(int)
+            'failed': 0
         })
     }
     
@@ -361,15 +377,9 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
         
-        # SQL queries
-        check_query = """
-            SELECT listing_id, price, title, description, views_count 
-            FROM properties 
-            WHERE listing_id = %s AND source_website = %s
-        """
-        
+        # Insert query without update logic
         insert_query = """
-            INSERT INTO properties (
+            INSERT IGNORE INTO properties (
                 listing_id, title, description, metro_station, district,
                 address, location, latitude, longitude, rooms, area, 
                 floor, total_floors, property_type, listing_type, price, 
@@ -379,37 +389,8 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 listing_date
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s
             )
-            ON DUPLICATE KEY UPDATE
-                price = CASE 
-                    WHEN COALESCE(price, 0) != COALESCE(VALUES(price), 0)
-                    THEN VALUES(price)
-                    ELSE price
-                END,
-                title = CASE 
-                    WHEN COALESCE(title, '') != COALESCE(VALUES(title), '')
-                    THEN VALUES(title)
-                    ELSE title
-                END,
-                description = CASE 
-                    WHEN COALESCE(description, '') != COALESCE(VALUES(description), '')
-                    THEN VALUES(description)
-                    ELSE description
-                END,
-                views_count = CASE 
-                    WHEN COALESCE(views_count, 0) != COALESCE(VALUES(views_count), 0)
-                    THEN VALUES(views_count)
-                    ELSE views_count
-                END,
-                updated_at = CASE 
-                    WHEN COALESCE(price, 0) != COALESCE(VALUES(price), 0)
-                        OR COALESCE(title, '') != COALESCE(VALUES(title), '')
-                        OR COALESCE(description, '') != COALESCE(VALUES(description), '')
-                        OR COALESCE(views_count, 0) != COALESCE(VALUES(views_count), 0)
-                    THEN VALUES(updated_at)
-                    ELSE updated_at
-                END
         """
         
         for listing in listings:
@@ -420,16 +401,11 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     stats['error_details']['invalid_data'] += 1
                     continue
                 
-                listing_id = sanitized['listing_id']
                 website = sanitized['source_website']
                 
-                # Check if record exists
-                cursor.execute(check_query, (listing_id, website))
-                existing_record = cursor.fetchone()
-                
-                # Prepare insert values
+                # Insert values for new record
                 values = (
-                    listing_id,
+                    sanitized.get('listing_id'),
                     sanitized.get('title'),
                     sanitized.get('description'),
                     sanitized.get('metro_station'),
@@ -456,43 +432,20 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                     sanitized.get('source_url'),
                     website,
                     sanitized.get('created_at', datetime.datetime.now()),
-                    sanitized.get('updated_at', datetime.datetime.now()),
                     sanitized.get('listing_date')
                 )
                 
-                if existing_record:
-                    fields_changed = False
-                    fields_to_check = {
-                        'price': (1, sanitized.get('price')),
-                        'title': (2, sanitized.get('title')),
-                        'description': (3, sanitized.get('description')),
-                        'views_count': (4, sanitized.get('views_count'))
-                    }
-                    
-                    for field, (idx, new_value) in fields_to_check.items():
-                        old_value = existing_record[idx]
-                        # Compare values handling NULL
-                        if ((old_value is None) != (new_value is None)) or (old_value != new_value):
-                            fields_changed = True
-                            stats['updated_fields'][field].add(listing_id)
-                            stats['website_stats'][website]['updated_fields'][field] += 1
-                    
-                    if fields_changed:
-                        cursor.execute(insert_query, values)
-                        stats['successful_updates'] += 1
-                        stats['updated_listings'].add(listing_id)
-                        stats['website_stats'][website]['updated'] += 1
-                else:
-                    # New listing
-                    cursor.execute(insert_query, values)
+                cursor.execute(insert_query, values)
+                
+                # Track successful inserts based on cursor.rowcount
+                if cursor.rowcount > 0:
                     stats['successful_inserts'] += 1
-                    stats['new_listings'].add(listing_id)
                     stats['website_stats'][website]['new'] += 1
                 
                 # Commit every 50 records
-                if (stats['successful_inserts'] + stats['successful_updates']) % 50 == 0:
+                if stats['successful_inserts'] % 50 == 0:
                     connection.commit()
-                
+                    
             except Exception as e:
                 stats['failed'] += 1
                 error_type = type(e).__name__
@@ -505,15 +458,13 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         connection.commit()
         cursor.close()
         
-        # Convert updated_fields sets to counts for the report
-        stats['updated_fields'] = {k: len(v) for k, v in stats['updated_fields'].items()}
-        
         return stats
         
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-    
+
+ 
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()

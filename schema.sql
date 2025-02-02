@@ -65,3 +65,6 @@ CREATE TABLE properties (
 ALTER TABLE properties
     DROP INDEX listing_id,
     ADD UNIQUE KEY unique_listing (listing_id, source_website);
+
+ALTER TABLE properties
+MODIFY updated_at TIMESTAMP NULL;

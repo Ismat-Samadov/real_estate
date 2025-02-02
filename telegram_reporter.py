@@ -35,37 +35,27 @@ class TelegramReporter:
             # Per-Website Statistics
             total_scraped = 0
             total_new = 0
-            total_updated = 0
             total_failed = 0
 
             for website in sorted(scraper_stats['success_count'].keys()):
                 scraped = scraper_stats['success_count'][website]
                 new = db_stats['website_stats'][website]['new']
-                updated = db_stats['website_stats'][website]['updated']
                 failed = db_stats['website_stats'][website]['failed']
                 
                 total_scraped += scraped
                 total_new += new
-                total_updated += updated
                 total_failed += failed
                 
                 report += f"🌐 <b>{website}</b>\n"
                 # Success metrics
-                report += f"├─ Results: {scraped:,} scraped\n"
-                report += f"├─ Changes: +{new:,} new / ↻{updated:,} updated\n"
+                report += f"├─ Scraped: {scraped:,}\n"
+                report += f"├─ New Records: {new:,}\n"
+                report += f"├─ Failed: {failed:,}\n"
                 
                 # Performance metrics
                 if scraped > 0:
                     avg_time = total_duration / scraped
                     report += f"├─ Avg Time/Listing: {self.format_duration(avg_time)}\n"
-                
-                # Field updates tracking
-                if website in db_stats['website_stats']:
-                    field_updates = db_stats['website_stats'][website].get('updated_fields', {})
-                    if field_updates:
-                        report += "├─ Updated Fields:\n"
-                        for field, count in field_updates.items():
-                            report += f"│  ├─ {field}: {count:,}\n"
                 
                 # Error reporting
                 if website in scraper_stats['error_details']:
@@ -87,14 +77,13 @@ class TelegramReporter:
             report += "📊 <b>Final Summary</b>\n"
             report += f"├─ Total Processed: {total_scraped + total_failed:,}\n"
             report += f"├─ Successfully Scraped: {total_scraped:,}\n"
-            report += f"├─ New Listings: {total_new:,}\n"
-            report += f"├─ Updated Listings: {total_updated:,}\n"
+            report += f"├─ New Listings Added: {total_new:,}\n"
             report += f"├─ Failed: {total_failed:,}\n"
             
             # Overall success rate
             if total_scraped + total_failed > 0:
                 overall_success_rate = (total_scraped / (total_scraped + total_failed)) * 100
-                report += f"└─ Overall Success Rate: {overall_success_rate:.1f}%\n"
+                report += f"└─ Overall Success Rate: {overall_success_rate:.1f}%"
 
             try:
                 # Try sending with current chat_id
