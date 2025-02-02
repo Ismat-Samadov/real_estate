@@ -26,6 +26,7 @@ ORDER BY updated_at DESC;
 
 
 -- check duplicate listings
+
 with t as(
 SELECT 
     listing_id,
