@@ -66,7 +66,7 @@ def get_db_connection():
             'database': os.getenv('DB_NAME'),
             'port': int(os.getenv('DB_PORT', '3306')),
             'charset': 'utf8mb4',
-            'collation': 'utf8mb4_unicode_ci',  # Using a more widely supported collation
+            'collation': 'utf8mb4_unicode_ci',
             'use_unicode': True,
             'raise_on_warnings': True
         }
