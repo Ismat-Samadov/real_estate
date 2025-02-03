@@ -323,9 +323,17 @@ check_processes() {
    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
    PYTHONPATH=/var/www/scraper
    
-   # Main scraping schedule
-   0 5,7,9,11,13,15,17,19 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
-   
+    # Every 2 minutes from 8 AM to 7 PM
+    */2 8-18 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
+
+    # Every 5 minutes from 7 PM to midnight
+    */5 19-23 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
+
+    # Every 5 minutes from midnight to 1 AM
+    */5 0 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
+
+    # Every 30 minutes from 1 AM to 8 AM
+    */30 1-7 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
    # Health checks (every 5 minutes)
    */5 * * * * scraper /var/www/scraper/scripts/health_check.sh > /dev/null 2>&1
    
