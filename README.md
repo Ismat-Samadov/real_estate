@@ -317,26 +317,15 @@ check_processes() {
 
 4. **Advanced Scheduling**
    ```bash
-   # Deploy crontab configuration
-   sudo cat > /etc/cron.d/real-estate-scraper << EOF
-   SHELL=/bin/bash
-   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-   PYTHONPATH=/var/www/scraper
-   
-    # Every 2 minutes from 8 AM to 7 PM
-    */2 8-18 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
-
-    # Every 5 minutes from 7 PM to midnight
-    */5 19-23 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
-
-    # Every 5 minutes from midnight to 1 AM
-    */5 0 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
-
-    # Every 30 minutes from 1 AM to 8 AM
-    */30 1-7 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
-   # Health checks (every 5 minutes)
-   */5 * * * * scraper /var/www/scraper/scripts/health_check.sh > /dev/null 2>&1
-   EOF
+cat << 'EOF' > mycron
+*/2 4-15 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
+*/5 15-23 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
+*/5 0-1 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
+*/30 2-3 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
+EOF
+   ```
+    ```bash
+crontab mycron
    ```
 
 ## Performance Optimization
