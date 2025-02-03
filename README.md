@@ -336,12 +336,6 @@ check_processes() {
     */30 1-7 * * * scraper /var/www/scraper/run_scraper.sh > /dev/null 2>&1
    # Health checks (every 5 minutes)
    */5 * * * * scraper /var/www/scraper/scripts/health_check.sh > /dev/null 2>&1
-   
-   # Database maintenance
-   0 2 * * * scraper /var/www/scraper/scripts/db_maintenance.sh > /dev/null 2>&1
-   
-   # Log rotation
-   0 0 * * 0 scraper /usr/sbin/logrotate -f /etc/logrotate.d/scraper-logs
    EOF
    ```
 
