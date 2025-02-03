@@ -325,9 +325,9 @@ cat << 'EOF' > mycron
 */30 2-3 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
 EOF
 ```
-    ```bash
+```bash
 crontab mycron
-   ```
+```
 
 ## Performance Optimization
 
