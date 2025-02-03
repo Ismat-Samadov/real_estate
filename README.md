@@ -316,14 +316,15 @@ check_processes() {
    ```
 
 4. **Advanced Scheduling**
-   ```bash
+
+```bash
 cat << 'EOF' > mycron
 */2 4-15 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
 */5 15-23 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
 */5 0-1 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
 */30 2-3 * * * /var/www/scraper/run_scraper.sh >> /var/www/scraper/logs/cron.log 2>&1
 EOF
-   ```
+```
     ```bash
 crontab mycron
    ```
