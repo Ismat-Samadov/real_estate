@@ -62,12 +62,17 @@ CREATE TABLE properties (
     INDEX idx_listing_date (listing_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-ALTER TABLE properties
-    DROP INDEX listing_id,
-    ADD UNIQUE KEY unique_listing (listing_id, source_website);
 
-ALTER TABLE properties
-MODIFY updated_at TIMESTAMP NULL;
 
-ALTER TABLE properties 
-    DROP INDEX unique_listing;
+-- First drop the index if it exists
+ALTER TABLE properties
+DROP INDEX unique_source_url;
+
+-- Change column type to VARCHAR and make it NOT NULL
+ALTER TABLE properties
+MODIFY source_url VARCHAR(255) NOT NULL;
+
+-- Add the unique constraint
+ALTER TABLE properties
+ADD UNIQUE KEY unique_source_url (source_url);
+    
