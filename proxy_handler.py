@@ -17,7 +17,7 @@ class ProxyHandler:
         # 711 proxy configuration
         self.username = os.getenv('PROXY_USERNAME')
         self.password = os.getenv('PROXY_PASSWORD')
-        self.proxy_host = 'global.711proxy.com:10000'  # Updated to match working configuration
+        self.proxy_host = 'global.711proxy.com:10000'
         
         if not self.username or not self.password:
             raise ValueError("711 Proxy credentials not found in environment variables")
@@ -26,24 +26,15 @@ class ProxyHandler:
         self.proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}"
         
         self.logger.info(f"Initialized proxy with URL format: {self.proxy_url.replace(self.password, '****')}")
-        
-        # Rate limiting settings
-        self.request_count = 0
-        self.error_count = 0
-        self.last_request_time = 0
-        self.min_request_delay = 1
-        self.max_request_delay = 3
-        self.error_delay = 5
-        self.max_errors = 3
 
     async def verify_proxy(self) -> bool:
-        """Verify proxy connection and location"""
+        """Verify proxy connection and location - succeeds if any verification endpoint works"""
         verification_urls = [
             'https://ipinfo.io/json',
-            'https://api.myip.com'
+            'https://api.myip.com',
+            'https://ip-api.com/json'
         ]
         
-        # Create a test session
         connector = aiohttp.TCPConnector(ssl=False)
         session = aiohttp.ClientSession(connector=connector)
         
@@ -59,41 +50,40 @@ class ProxyHandler:
                         timeout=30
                     ) as response:
                         if response.status == 200:
-                            data = await response.json()
-                            self.logger.info(f"Proxy verification successful at {url}: {data}")
-                            
-                            # Verify we're getting an Azerbaijan IP
-                            if data.get('country') == 'AZ' or data.get('country_code') == 'AZ':
-                                self.logger.info("Successfully verified Azerbaijan IP")
-                            else:
-                                self.logger.warning(f"Proxy IP not from Azerbaijan: {data}")
-                                return False
-                            
-                            continue
-                        else:
-                            self.logger.error(f"Proxy verification failed at {url} with status: {response.status}")
-                            return False
-                            
+                            try:
+                                data = await response.json()
+                                self.logger.info(f"Proxy verification successful at {url}: {data}")
+                                
+                                # Check for Azerbaijan IP in various API response formats
+                                if (data.get('country') == 'AZ' or 
+                                    data.get('country_code') == 'AZ' or 
+                                    data.get('countryCode') == 'AZ'):
+                                    self.logger.info("Successfully verified Azerbaijan IP")
+                                    
+                                    # Test target site accessibility
+                                    self.logger.info("Testing target site accessibility")
+                                    async with session.get(
+                                        'https://bina.az/robots.txt',
+                                        proxy=self.proxy_url,
+                                        timeout=30
+                                    ) as site_response:
+                                        if site_response.status == 200:
+                                            self.logger.info("Target site verification successful")
+                                            return True
+                                        else:
+                                            self.logger.warning(f"Target site verification failed: {site_response.status}")
+                                            continue
+                                            
+                            except (ValueError, aiohttp.ContentTypeError) as e:
+                                self.logger.warning(f"Could not parse JSON from {url}: {str(e)}")
+                                continue
+                                
                 except Exception as e:
-                    self.logger.error(f"Proxy verification error at {url}: {str(e)}")
-                    return False
-                
-            # Test target site accessibility
-            test_url = 'https://bina.az/robots.txt'
-            self.logger.info(f"Testing target site accessibility: {test_url}")
+                    self.logger.warning(f"Error checking {url}: {str(e)}")
+                    continue
             
-            async with session.get(
-                test_url,
-                proxy=self.proxy_url,
-                timeout=30
-            ) as response:
-                if response.status != 200:
-                    self.logger.error(f"Target site verification failed: {response.status}")
-                    return False
-                else:
-                    self.logger.info("Target site verification successful")
-            
-            return True
+            self.logger.error("No verification endpoints succeeded")
+            return False
             
         except Exception as e:
             self.logger.error(f"Proxy verification error: {str(e)}")
@@ -163,12 +153,10 @@ class ProxyHandler:
                     
             raise Exception(f"Max retries ({max_retries}) exceeded. Last error: {last_error}")
         
-        # Replace the get_page_content method
         scraper_instance.get_page_content = new_get_page_content
         
         async def new_init_session():
             if not hasattr(scraper_instance, 'session') or not scraper_instance.session:
                 scraper_instance.session = await self.create_session()
         
-        # Replace the init_session method
         scraper_instance.init_session = new_init_session
