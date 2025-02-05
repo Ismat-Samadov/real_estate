@@ -14,7 +14,8 @@ from scrapers.unvan import UnvanScraper
 from scrapers.vipemlak import VipEmlakScraper
 from scrapers.lalafo import LalafoScraper
 from scrapers.tap import TapAzScraper
-from bright_data_proxy import BrightDataProxy
+# from bright_data_proxy import BrightDataProxy
+from proxy_handler import ProxyHandler # 711_proxy
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -490,9 +491,9 @@ async def run_scrapers():
     all_results = []
     
     try:
-        proxy_manager = BrightDataProxy()
+        proxy_manager = ProxyHandler()
         if not await proxy_manager.verify_proxy():
-            logger.error("Failed to verify Bright Data proxy connection")
+            logger.error("Failed to verify 711proxy connection")
             return [], stats
             
         # Match website names with page_config

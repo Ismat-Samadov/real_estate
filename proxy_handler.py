@@ -17,8 +17,8 @@ class ProxyHandler:
         # 711 proxy configuration
         self.username = os.getenv('PROXY_USERNAME')
         self.password = os.getenv('PROXY_PASSWORD')
-        self.proxy_host = 'pr.711proxy.com'  # Main endpoint
-        self.proxy_port = '12345'  # Default port, adjust as needed
+        self.proxy_host = 'global.711proxy.com'
+        self.proxy_port = '1000'  
         
         # Generate session ID for sticky sessions
         self.session_id = random.randbytes(8).hex()

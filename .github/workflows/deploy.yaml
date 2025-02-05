@@ -23,6 +23,8 @@ jobs:
       SCRAPER_PAGES: ${{ secrets.SCRAPER_PAGES }}
       BRIGHT_DATA_USERNAME: ${{ secrets.BRIGHT_DATA_USERNAME }}
       BRIGHT_DATA_PASSWORD: ${{ secrets.BRIGHT_DATA_PASSWORD }}
+      PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
+      PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
 
     steps:
       - name: Checkout code
