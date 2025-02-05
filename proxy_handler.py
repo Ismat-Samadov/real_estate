@@ -28,70 +28,25 @@ class ProxyHandler:
         self.logger.info(f"Initialized proxy with URL format: {self.proxy_url.replace(self.password, '****')}")
 
     async def verify_proxy(self) -> bool:
-        """Verify proxy connection and location - succeeds if any verification endpoint works"""
-        verification_urls = [
-            'https://ipinfo.io/json',
-            'https://api.myip.com',
-            'https://ip-api.com/json'
-        ]
-        
+        """Direct proxy verification by testing target site"""
         connector = aiohttp.TCPConnector(ssl=False)
         session = aiohttp.ClientSession(connector=connector)
         
         try:
-            self.logger.info("Starting proxy verification...")
-            
-            for url in verification_urls:
-                try:
-                    self.logger.info(f"Testing proxy with {url}")
-                    async with session.get(
-                        url,
-                        proxy=self.proxy_url,
-                        timeout=30
-                    ) as response:
-                        if response.status == 200:
-                            try:
-                                data = await response.json()
-                                self.logger.info(f"Proxy verification successful at {url}: {data}")
-                                
-                                # Check for Azerbaijan IP in various API response formats
-                                if (data.get('country') == 'AZ' or 
-                                    data.get('country_code') == 'AZ' or 
-                                    data.get('countryCode') == 'AZ'):
-                                    self.logger.info("Successfully verified Azerbaijan IP")
-                                    
-                                    # Test target site accessibility
-                                    self.logger.info("Testing target site accessibility")
-                                    async with session.get(
-                                        'https://bina.az/robots.txt',
-                                        proxy=self.proxy_url,
-                                        timeout=30
-                                    ) as site_response:
-                                        if site_response.status == 200:
-                                            self.logger.info("Target site verification successful")
-                                            return True
-                                        else:
-                                            self.logger.warning(f"Target site verification failed: {site_response.status}")
-                                            continue
-                                            
-                            except (ValueError, aiohttp.ContentTypeError) as e:
-                                self.logger.warning(f"Could not parse JSON from {url}: {str(e)}")
-                                continue
-                                
-                except Exception as e:
-                    self.logger.warning(f"Error checking {url}: {str(e)}")
-                    continue
-            
-            self.logger.error("No verification endpoints succeeded")
-            return False
-            
+            async with session.get(
+                'https://bina.az',
+                proxy=self.proxy_url,
+                timeout=30
+            ) as response:
+                return response.status == 200
+                
         except Exception as e:
             self.logger.error(f"Proxy verification error: {str(e)}")
             return False
             
         finally:
             await session.close()
-
+            
     async def create_session(self) -> aiohttp.ClientSession:
         """Create an optimized aiohttp session"""
         connector = aiohttp.TCPConnector(
