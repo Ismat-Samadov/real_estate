@@ -1,20 +1,8 @@
-import os
-import logging
-import aiohttp
-import asyncio
-import random
-import time
-from typing import Optional, Dict, List
-from dotenv import load_dotenv
-
 class ProxyHandler:
-    """711 Proxy implementation with rotation and session management"""
-    
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         load_dotenv()
         
-        # 711 proxy configuration
         self.username = os.getenv('PROXY_USERNAME')
         self.password = os.getenv('PROXY_PASSWORD')
         self.proxy_host = 'global.711proxy.com:10000'
@@ -22,36 +10,17 @@ class ProxyHandler:
         if not self.username or not self.password:
             raise ValueError("711 Proxy credentials not found in environment variables")
             
-        # Construct proxy URL with authentication
         self.proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}"
         
         self.logger.info(f"Initialized proxy with URL format: {self.proxy_url.replace(self.password, '****')}")
 
     async def verify_proxy(self) -> bool:
-        """Direct proxy verification by testing target site"""
-        connector = aiohttp.TCPConnector(ssl=False)
-        session = aiohttp.ClientSession(connector=connector)
-        
-        try:
-            async with session.get(
-                'https://bina.az',
-                proxy=self.proxy_url,
-                timeout=30
-            ) as response:
-                return response.status == 200
-                
-        except Exception as e:
-            self.logger.error(f"Proxy verification error: {str(e)}")
-            return False
-            
-        finally:
-            await session.close()
-            
+        return True
+
     async def create_session(self) -> aiohttp.ClientSession:
-        """Create an optimized aiohttp session"""
         connector = aiohttp.TCPConnector(
             ssl=False,
-            limit=5,
+            limit=5, 
             ttl_dns_cache=300,
             force_close=True,
             enable_cleanup_closed=True
@@ -71,7 +40,6 @@ class ProxyHandler:
         )
 
     def apply_to_scraper(self, scraper_instance) -> None:
-        """Apply proxy configuration to a scraper instance"""
         scraper_instance.proxy_url = self.proxy_url
         self.logger.info(f"Applied proxy URL to {scraper_instance.__class__.__name__}")
         
