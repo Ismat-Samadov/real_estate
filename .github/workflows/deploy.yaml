@@ -61,6 +61,8 @@ jobs:
           echo "BRIGHT_DATA_PASSWORD=${{ secrets.BRIGHT_DATA_PASSWORD }}" >> .env
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
           echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
+          echo "PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}" >> .env
+          echo "PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}" >> .env
           
 
           tar czf deploy.tar.gz \
