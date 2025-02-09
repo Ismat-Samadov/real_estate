@@ -1,4 +1,4 @@
-
+-- procedure.sql contains the stored procedures and events for processing raw property listings
 -- Begin stored procedure definition
 DELIMITER //
 

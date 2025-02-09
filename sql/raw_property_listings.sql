@@ -1,3 +1,4 @@
+-- raw_property_listings.sql contains the database schema for storing raw property listings
 /*
 This SQL script sets up a two-stage data processing system for real estate listings:
 1. A staging table (raw_property_listings) that accepts unvalidated data

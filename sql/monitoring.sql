@@ -1,3 +1,4 @@
+-- monitoring.sql contains queries for monitoring the data in the properties table
 SELECT 
     source_website,
     COUNT(distinct listing_id ) as listing_count,

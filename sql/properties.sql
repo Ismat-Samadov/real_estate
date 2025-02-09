@@ -1,3 +1,4 @@
+-- properties.sql contains the database schema for storing property listings
 --  Create the database schema for storing property listings
 CREATE TABLE properties (
     -- Primary key and unique identifier for each listing
