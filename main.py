@@ -477,12 +477,12 @@ async def run_scrapers():
     # Standardize website names
     page_config = {
         "bina.az": 1,
+        # "arenda.az": 1,      
         # "tap.az": 4,        
         # "emlak.az": 4,      
         # "lalafo.az": 4,     
         # "ev10.az": 1,       
         # "unvan.az": 1,       
-        # "arenda.az": 1,      
         # "yeniemlak.az": 1,   
         # "ipoteka.az": 1,     
         # "vipemlak.az": 1     
@@ -500,14 +500,15 @@ async def run_scrapers():
         scrapers = [
             ("bina.az", OptimizedBinaScraper()),
             # ("arenda.az", OptimizedArendaScraper()),
-            # ("ev10.az", EV10Scraper()),
-            # ("yeniemlak.az", YeniEmlakScraper()),
+            # ("tap.az", TapAzScraper()),
             # ("emlak.az", EmlakAzScraper()),
+            # ("lalafo.az", LalafoScraper()),
+            # ("ev10.az", EV10Scraper()),
+            # ("unvan.az", UnvanScraper()),
+            # ("yeniemlak.az", YeniEmlakScraper()),
             # ("ipoteka.az", IpotekaScraper()),
             # ("unvan.az", UnvanScraper()),
             # ("vipemlak.az", VipEmlakScraper()),
-            # ("lalafo.az", LalafoScraper()),
-            # ("tap.az", TapAzScraper())
         ]
         
         for name, scraper in scrapers:
