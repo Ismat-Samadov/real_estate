@@ -70,4 +70,11 @@ MODIFY source_url VARCHAR(255) NOT NULL;
 -- Add the unique constraint
 ALTER TABLE properties
 ADD UNIQUE KEY unique_source_url (source_url);
-    
+
+
+-- Add checksum column to existing properties table
+ALTER TABLE properties
+ADD COLUMN checksum VARCHAR(64) AFTER source_website;
+
+-- Add index on checksum for efficient lookups
+CREATE INDEX idx_checksum ON properties(checksum);

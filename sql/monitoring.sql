@@ -75,3 +75,15 @@ WHERE
 --     AND created_at BETWEEN '2025-02-02 17:10:00' AND '2025-02-02 17:17:09'
 ORDER BY 
     a.listing_id DESC;
+
+-- find duplicate listings in raw_property_listings
+with t as (SELECT 
+-- id, listing_id, title, metro_station, district, address, location, latitude, longitude, rooms, area, floor, total_floors, property_type, listing_type, price, currency, contact_type, contact_phone, whatsapp_available, description, views_count, created_at, updated_at, listing_date, has_repair, amenities, photos, source_url, source_website, checksum, processed, process_message, process_timestamp
+source_url,count(source_url)
+FROM remart_scraper.raw_property_listings
+group by source_url
+having count(source_url)>1
+order by 2 desc)
+
+select * from remart_scraper.raw_property_listings a inner join t on  a.source_url =t.source_url WHERE a.listing_id ='4895405'
+-- order by a.created_at , a.listing_id 
