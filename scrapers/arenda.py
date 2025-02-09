@@ -9,43 +9,73 @@ import datetime
 import re
 import json
 import time
+from asyncio import Semaphore
+
 
 class OptimizedArendaScraper:
-    """Optimized scraper for arenda.az"""
+    """Optimized scraper for arenda.az with enhanced error handling"""
     
     BASE_URL = "https://arenda.az"
     LISTINGS_URL = "https://arenda.az/filtirli-axtaris/"
     
-    def __init__(self):
+    def __init__(self, max_concurrent: int = 3):
         """Initialize the scraper with configuration"""
         self.logger = logging.getLogger(__name__)
         self.session = None
-    
+        self.proxy_url = None
+        self.semaphore = Semaphore(max_concurrent)
+        self.request_count = 0
+        self.last_request_time = 0
+        
+    def _get_random_user_agent(self):
+        """Get a random user agent"""
+        browsers = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+        return random.choice(browsers)
+
     async def init_session(self):
-        """Initialize aiohttp session with browser-like headers"""
+        """Initialize session with enhanced headers and connection handling"""
         if not self.session:
-            # Common browser headers
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': self._get_random_user_agent(),
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
+                'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
-                'Cache-Control': 'max-age=0',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
+                'Upgrade-Insecure-Requests': '1',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache'
             }
+            
+            connector = aiohttp.TCPConnector(
+                ssl=False,
+                limit=3,
+                ttl_dns_cache=300,
+                force_close=True,
+                enable_cleanup_closed=True
+            )
+            
+            timeout = aiohttp.ClientTimeout(
+                total=30,
+                connect=10,
+                sock_read=10,
+                sock_connect=10
+            )
             
             self.session = aiohttp.ClientSession(
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-                connector=aiohttp.TCPConnector(ssl=False)
+                connector=connector,
+                timeout=timeout,
+                trust_env=True,
+                cookie_jar=aiohttp.CookieJar(unsafe=True)
             )
 
     async def close_session(self):
@@ -54,84 +84,150 @@ class OptimizedArendaScraper:
             await self.session.close()
             self.session = None
 
-    async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
-        """Fetch page content with retry logic and anti-bot measures"""
-        MAX_RETRIES = int(os.getenv('MAX_RETRIES', 5))
-        DELAY = int(os.getenv('REQUEST_DELAY', 1))
+    async def _smart_delay(self):
+        """Implement adaptive delay"""
+        now = time.time()
+        time_since_last = now - self.last_request_time
         
-        self.logger.info(f"Attempting to fetch URL: {url}")
-        start_time = time.time()
+        # Base delay of 2-4 seconds
+        delay = random.uniform(2, 4)
         
-        # Add request-specific headers
-        headers = {
-            'Referer': 'https://arenda.az/',
-            'Origin': 'https://arenda.az',
-            'Host': 'arenda.az'
-        }
+        # Increase delay if making many requests
+        if self.request_count > 20:
+            delay *= 1.5
         
-        # Add cookies and additional parameters
-        cookies = {
-            'lang': '1',
-            'arenda': '1',
-        }
+        if time_since_last < delay:
+            await asyncio.sleep(delay - time_since_last)
         
-        for attempt in range(MAX_RETRIES):
-            try:
-                self.logger.info(f"Attempt {attempt + 1} of {MAX_RETRIES}")
-                await asyncio.sleep(DELAY + random.random() * 2)
-                
-                async with self.session.get(
-                    url, 
-                    params=params,
-                    headers=headers,
-                    cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    self.logger.info(f"Got response with status: {response.status}")
-                    
-                    if response.status == 200:
-                        try:
-                            # First try to read as bytes
-                            content_bytes = await response.read()
-                            
-                            # Try different encodings
-                            for encoding in ['utf-8', 'cp1251', 'iso-8859-1', 'windows-1252']:
-                                try:
-                                    content = content_bytes.decode(encoding)
-                                    elapsed = time.time() - start_time
-                                    self.logger.info(f"Successfully decoded with {encoding} in {elapsed:.2f} seconds")
-                                    return content
-                                except UnicodeDecodeError:
-                                    continue
-                            
-                            # If no encoding worked, use replacement character for errors
-                            content = content_bytes.decode('utf-8', errors='replace')
-                            self.logger.warning("Had to use replacement characters for decoding")
-                            return content
-                            
-                        except Exception as e:
-                            self.logger.error(f"Error decoding content: {str(e)}")
-                            raise
-                            
-                    elif response.status == 403:
-                        self.logger.warning(f"Access forbidden (403) on attempt {attempt + 1}. Might be rate-limited.")
-                        await asyncio.sleep(DELAY * (attempt + 2))
-                    else:
-                        self.logger.warning(f"Failed to fetch {url}, status: {response.status}")
-                        
-            except asyncio.TimeoutError:
-                self.logger.warning(f"Timeout on attempt {attempt + 1}")
-            except Exception as e:
-                self.logger.error(f"Error fetching {url}: {str(e)}")
-                if attempt == MAX_RETRIES - 1:
-                    raise
-                
-            await asyncio.sleep(DELAY * (attempt + 1))  # Exponential backoff
-        
-        elapsed = time.time() - start_time
-        self.logger.error(f"Failed to fetch {url} after {MAX_RETRIES} attempts. Total time: {elapsed:.2f} seconds")
-        raise Exception(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
+        self.last_request_time = time.time()
+        self.request_count += 1
 
+    async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
+        """Fetch page content with enhanced retry logic and robust error handling"""
+        async with self.semaphore:
+            max_retries = int(os.getenv('MAX_RETRIES', '5'))
+            base_delay = float(os.getenv('REQUEST_DELAY', '2'))
+            last_error = None
+            start_time = time.time()
+            
+            for attempt in range(max_retries):
+                try:
+                    await self._smart_delay()
+                    
+                    # Log attempt details
+                    self.logger.debug(f"Request attempt {attempt + 1}/{max_retries} for {url}")
+                    elapsed = time.time() - start_time
+                    self.logger.debug(f"Elapsed time: {elapsed:.2f}s")
+                    
+                    # Add request-specific headers
+                    headers = {
+                        'Referer': 'https://arenda.az/',
+                        'Origin': 'https://arenda.az',
+                        'Host': 'arenda.az',
+                        'User-Agent': self._get_random_user_agent(),
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Cache-Control': 'no-cache',
+                        'Pragma': 'no-cache'
+                    }
+                    
+                    # Add specific cookies with randomization
+                    cookies = {
+                        'lang': '1',
+                        'arenda': '1',
+                        'PHPSESSID': f'{random.randbytes(16).hex()}',
+                        '_ga': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                        '_gid': f'GA1.1.{random.randint(1000000, 9999999)}.{int(time.time())}',
+                        'session_id': f'{random.randbytes(16).hex()}'
+                    }
+
+                    self.logger.info(f"Attempt {attempt + 1} of {max_retries} for URL: {url}")
+                    
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers={**self.session.headers, **headers},
+                        cookies=cookies,
+                        proxy=self.proxy_url,
+                        timeout=aiohttp.ClientTimeout(total=20),
+                        allow_redirects=True,
+                        verify_ssl=False
+                    ) as response:
+                        self.logger.info(f"Got response with status: {response.status}")
+                        
+                        if response.status == 200:
+                            try:
+                                # First try to read as bytes
+                                content_bytes = await response.read()
+                                
+                                # Try different encodings
+                                for encoding in ['utf-8', 'cp1251', 'iso-8859-1', 'windows-1252']:
+                                    try:
+                                        content = content_bytes.decode(encoding)
+                                        self.logger.info(f"Successfully decoded with {encoding}")
+                                        return content
+                                    except UnicodeDecodeError:
+                                        continue
+                                
+                                # If no encoding worked, use replacement character for errors
+                                content = content_bytes.decode('utf-8', errors='replace')
+                                self.logger.warning("Had to use replacement characters for decoding")
+                                return content
+                                
+                            except Exception as e:
+                                self.logger.error(f"Error decoding content: {str(e)}")
+                                raise
+                                
+                        elif response.status in [403, 429]:
+                            delay = (attempt + 1) * 5
+                            self.logger.warning(f"Rate limited (Status: {response.status}). Waiting {delay}s")
+                            await asyncio.sleep(delay)
+                            
+                            # If we're getting rate limited a lot, increase the base delay
+                            if attempt > 2:
+                                self.request_count += 10  # This will cause _smart_delay to slow down
+                            continue
+                            
+                        elif response.status >= 500:
+                            delay = random.uniform(5, 10)
+                            self.logger.warning(f"Server error {response.status}. Waiting {delay}s")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            raise aiohttp.ClientError(f"Unexpected status code: {response.status}")
+                            
+                except asyncio.TimeoutError:
+                    last_error = "Timeout"
+                    delay = random.uniform(3, 6) * (attempt + 1)
+                    self.logger.warning(f"Timeout on attempt {attempt + 1}. Waiting {delay}s")
+                    await asyncio.sleep(delay)
+                except aiohttp.ClientError as e:
+                    last_error = f"Client error: {str(e)}"
+                    if attempt == max_retries - 1:
+                        raise
+                    delay = random.uniform(2, 4) * (attempt + 1)
+                    await asyncio.sleep(delay)
+                except Exception as e:
+                    last_error = str(e)
+                    self.logger.error(f"Unexpected error on attempt {attempt + 1}: {str(e)}")
+                    
+                    # On last attempt, try to get more error details
+                    if attempt == max_retries - 1:
+                        self.logger.error(f"All retries failed for {url}. Total time: {time.time() - start_time:.2f}s")
+                        self.logger.error(f"Final error details: {type(e).__name__}: {str(e)}")
+                        raise
+                        
+                    # Calculate exponential backoff delay
+                    delay = base_delay * (2 ** attempt) + random.uniform(1, 3)
+                    self.logger.info(f"Waiting {delay:.2f}s before retry")
+                    await asyncio.sleep(delay)
+                    
+            error_msg = f"Max retries ({max_retries}) exceeded after {time.time() - start_time:.2f}s. Last error: {last_error}"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
+        
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
         listings = []
