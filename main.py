@@ -28,6 +28,8 @@ import random
 import time
 from collections import defaultdict
 from telegram_reporter import TelegramReporter
+from utils import generate_checksum
+
 
 def setup_logging():
     """Setup enhanced logging configuration"""
