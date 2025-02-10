@@ -1,3 +1,4 @@
+# bina.py - Optimized scraper for bina.az that maintains all original functionality
 import asyncio
 import aiohttp
 import random
