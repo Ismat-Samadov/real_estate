@@ -63,14 +63,18 @@ CREATE TABLE properties (
     INDEX idx_listing_date (listing_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Change column type to VARCHAR and make it NOT NULL
+-- Drop existing unique constraint if it exists
+ALTER TABLE properties 
+DROP INDEX IF EXISTS unique_source_url;
+
+-- Add new composite unique constraint
 ALTER TABLE properties
+ADD CONSTRAINT unique_listing_composite 
+UNIQUE (district, price, source_url);
+
+-- Update source_url column definition to be NOT NULL
+ALTER TABLE properties 
 MODIFY source_url VARCHAR(255) NOT NULL;
-
--- Add the unique constraint
-ALTER TABLE properties
-ADD UNIQUE KEY unique_source_url (source_url);
-
 
 -- Add checksum column to existing properties table
 ALTER TABLE properties
