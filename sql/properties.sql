@@ -17,7 +17,7 @@ CREATE TABLE properties (
     longitude VARCHAR(100),             -- Longitude with 8 decimal precision
     
     -- Property specifications
-    rooms SMALLINT,                        -- Number of rooms
+    rooms VARCHAR(200),                        -- Number of rooms
     area VARCHAR(200),                   -- Total area in square meters
     floor INT,                             -- Current floor of the property
     total_floors INT,                      -- Total number of floors in building
