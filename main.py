@@ -29,7 +29,16 @@ import time
 from collections import defaultdict
 from telegram_reporter import TelegramReporter
 from utils import generate_checksum
+import pytz
+from dataclasses import dataclass
 
+
+@dataclass
+class ScraperConfig:
+    name: str
+    scraper_class: type
+    active_periods: List[Dict]
+    pages: int = 1
 
 def setup_logging():
     """Setup enhanced logging configuration"""
@@ -464,7 +473,26 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
+
+def get_current_interval(scraper_name: str, active_periods: List[Dict]) -> int:
+    """Get the current interval based on time of day"""
+    timezone = pytz.timezone('Asia/Baku')
+    current_time = datetime.datetime.now(timezone).time()
     
+    for period in active_periods:
+        start = period['start']
+        end = period['end']
+        
+        # Handle periods crossing midnight
+        if end < start:
+            if current_time >= start or current_time <= end:
+                return period['interval']
+        else:
+            if start <= current_time <= end:
+                return period['interval']
+    
+    return active_periods[0]['interval']  # Default to first period interval
+
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()
@@ -477,18 +505,88 @@ async def run_scrapers():
         'avg_time_per_listing': 0
     }
     
-    # Standardize website names
-    page_config = {
-        "bina.az": 1,
-        # "arenda.az": 1,      
-        # "tap.az": 1,        
-        # "emlak.az": 1,      
-        # "lalafo.az": 1,     
-        # "ev10.az": 1,       
-        # "unvan.az": 1,       
-        # "yeniemlak.az": 1,   
-        # "ipoteka.az": 1,     
-        # "vipemlak.az": 1     
+    scraper_configs = {
+    'bina.az': {
+        'class': OptimizedBinaScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(19, 0), 'interval': 2},  # Peak hours every 2 min
+            {'start': datetime.time(19, 0), 'end': datetime.time(1, 0), 'interval': 5},  # Evening every 5 min
+            {'start': datetime.time(1, 0), 'end': datetime.time(2, 0), 'interval': 5},   # Night every 5 min
+            {'start': datetime.time(2, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Early morning every 30 min
+        ],
+        'pages': 1
+    },
+    'arenda.az': {
+        'class': OptimizedArendaScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 5},  # Day time every 5 min
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 15}  # Night time every 15 min
+        ],
+        'pages': 1
+    },
+    'tap.az': {
+        'class': TapAzScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(22, 0), 'interval': 10},  # Day time every 10 min
+            {'start': datetime.time(22, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Night time every 30 min
+        ],
+        'pages': 1
+    },
+    'emlak.az': {
+        'class': EmlakAzScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(21, 0), 'interval': 10},
+            {'start': datetime.time(21, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'lalafo.az': {
+        'class': LalafoScraper,
+        'active_periods': [
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 min all day
+        ],
+        'pages': 1
+    },
+    'ev10.az': {
+        'class': EV10Scraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'unvan.az': {
+        'class': UnvanScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 15},
+            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'yeniemlak.az': {
+        'class': YeniEmlakScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'ipoteka.az': {
+        'class': IpotekaScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 20},
+            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 45}
+        ],
+        'pages': 1
+    },
+    'vipemlak.az': {
+        'class': VipEmlakScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(19, 0), 'interval': 15},
+            {'start': datetime.time(19, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    }
     }
     
     all_results = []
@@ -496,41 +594,34 @@ async def run_scrapers():
     try:
         proxy_manager = ProxyHandler()
         if not await proxy_manager.verify_proxy():
-            logger.error("Failed to verify 711proxy connection")
+            logger.error("Failed to verify proxy connection")
             return [], stats
             
-        # Match website names with page_config
-        scrapers = [
-            ("bina.az", OptimizedBinaScraper()),
-            # ("arenda.az", OptimizedArendaScraper()),
-            # ("tap.az", TapAzScraper()),
-            # ("emlak.az", EmlakAzScraper()),
-            # ("lalafo.az", LalafoScraper()),
-            # ("ev10.az", EV10Scraper()),
-            # ("unvan.az", UnvanScraper()),
-            # ("yeniemlak.az", YeniEmlakScraper()),
-            # ("ipoteka.az", IpotekaScraper()),
-            # ("unvan.az", UnvanScraper()),
-            # ("vipemlak.az", VipEmlakScraper()),
-        ]
-        
-        for name, scraper in scrapers:
+        for name, config in scraper_configs.items():
             try:
+                # Get current interval for this scraper
+                interval = get_current_interval(name, config['active_periods'])
+                if interval == 0:  # Skip if outside active period
+                    continue
+                
                 scraper_start = time.time()
                 logger.info(f"Starting {name} scraper")
                 
+                scraper = config['class']()
                 proxy_manager.apply_to_scraper(scraper)
-                results = await scraper.run(pages=page_config[name])
+                results = await scraper.run(pages=config['pages'])
                 
                 if results:
                     stats['success_count'][name] = len(results)
-                    # Ensure consistent website naming in results
                     for result in results:
                         result['source_website'] = name
                     all_results.extend(results)
                 
                 scraper_duration = time.time() - scraper_start
                 logger.info(f"{name} completed in {scraper_duration:.2f}s")
+                
+                # Wait for the appropriate interval
+                await asyncio.sleep(interval * 60)
                 
             except Exception as e:
                 stats['error_count'][name] += 1
@@ -552,6 +643,7 @@ async def run_scrapers():
         stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
         
         return all_results, stats
+    
 
 async def main():
     """Main async function to run scrapers"""
