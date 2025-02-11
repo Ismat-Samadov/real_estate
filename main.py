@@ -481,9 +481,9 @@ async def run_scrapers():
     page_config = {
         "bina.az": 1,
         # "arenda.az": 1,      
-        # "tap.az": 4,        
-        # "emlak.az": 4,      
-        # "lalafo.az": 4,     
+        # "tap.az": 1,        
+        # "emlak.az": 1,      
+        # "lalafo.az": 1,     
         # "ev10.az": 1,       
         # "unvan.az": 1,       
         # "yeniemlak.az": 1,   
