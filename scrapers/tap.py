@@ -1,3 +1,4 @@
+# tap.py
 import asyncio
 import aiohttp
 import random
@@ -14,7 +15,7 @@ class TapAzScraper:
     """Scraper for tap.az real estate listings"""
     
     BASE_URL = "https://tap.az"
-    LISTINGS_URL = "https://tap.az/elanlar/dasinmaz-emlak"
+    LISTINGS_URL = "https://tap.az/elanlar/dasinmaz-emlak/menziller?keywords_source=typewritten"
     
     def __init__(self):
         """Initialize scraper with configuration"""
@@ -120,18 +121,44 @@ class TapAzScraper:
                 return None
         return None
 
+    # def extract_rooms(self, text: str) -> Optional[int]:
+    #     """Extract number of rooms from text"""
+    #     if not text:
+    #         return None
+    #     match = re.search(r'(\d+)-otaqlı', text)
+    #     if match:
+    #         try:
+    #             rooms = int(match.group(1))
+    #             if 1 <= rooms <= 20:  # Reasonable room range
+    #                 return rooms
+    #         except (ValueError, TypeError):
+    #             pass
+    #     return None
+
     def extract_rooms(self, text: str) -> Optional[int]:
-        """Extract number of rooms from text"""
+        """
+        Extract number of rooms from text. Returns 0 if room count exceeds 20.
+        
+        Args:
+            text (str): Text containing room information
+            
+        Returns:
+            Optional[int]: Number of rooms, 0 if > 20 rooms, None if no valid number found
+        """
         if not text:
             return None
+            
         match = re.search(r'(\d+)-otaqlı', text)
         if match:
             try:
                 rooms = int(match.group(1))
                 if 1 <= rooms <= 20:  # Reasonable room range
                     return rooms
+                elif rooms > 20:  # Handle cases with more than 20 rooms
+                    return 0
             except (ValueError, TypeError):
                 pass
+                
         return None
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
@@ -276,10 +303,46 @@ class TapAzScraper:
                                 data['area'] = round(num, 2)
                         except (ValueError, TypeError):
                             pass
+                # elif 'yerləşmə yeri' in label_text:
+                #     data['location'] = value_text
+                #     if 'r.' in value_text:
+                #         data['district'] = value_text.split('r.')[0].strip()
+                #     if 'm.' in value_text:
+                #         data['metro_station'] = value_text.split('m.')[0].strip()
                 elif 'yerləşmə yeri' in label_text:
                     data['location'] = value_text
-                elif 'şəhər' in label_text:
-                    data['district'] = value_text
+                    # Try to extract district with various patterns
+                    district_patterns = [
+                        r'(\w+)\s*r\.',  # matches "Yasamal r."
+                        r'(\w+)\s*ray\.',  # matches "Yasamal ray."
+                        r'(\w+)\s*rayonu',  # matches "Yasamal rayonu"
+                        r'(\w+)\s*rayon',   # matches "Yasamal rayon"
+                        r'(\w+)\s*district' # matches "Yasamal district"
+                    ]
+                    
+                    for pattern in district_patterns:
+                        district_match = re.search(pattern, value_text, re.IGNORECASE)
+                        if district_match:
+                            data['district'] = district_match.group(1).strip()
+                            break
+                    
+                    # Try to extract metro station with various patterns
+                    metro_patterns = [
+                        r'(\w+)\s*m\.',  # matches "Nizami m."
+                        r'(\w+)\s*metro',  # matches "Nizami metro"
+                        r'(\w+)\s*m/st',  # matches "Nizami m/st"
+                        r'(\w+)\s*metro stansiyası'  # matches "Nizami metro stansiyası"
+                    ]
+                    
+                    for pattern in metro_patterns:
+                        metro_match = re.search(pattern, value_text, re.IGNORECASE)
+                        if metro_match:
+                            data['metro_station'] = metro_match.group(1).strip()
+                            break
+                            
+                    # If location contains address-like information, update address field
+                    if not any(x in value_text.lower() for x in ['metro', 'rayon', 'district']) and len(value_text) > 5:
+                        data['address'] = value_text.strip()
                 elif 'elanın tipi' in label_text:
                     if 'kirayə' in value_text.lower():
                         data['listing_type'] = 'monthly'
@@ -290,12 +353,6 @@ class TapAzScraper:
                         data['property_type'] = 'new'
                     elif 'köhnə tikili' in value_text.lower():
                         data['property_type'] = 'old'
-            
-            # Try to extract metro station if available
-            metro_elem = soup.select_one('a:-soup-contains("metro")')
-            if metro_elem:
-                metro = metro_elem.text.strip()
-                data['metro_station'] = metro.replace('metro', '').replace('m.', '').strip()
             
             # Get phone numbers from API
             phones = await self.get_phone_numbers(listing_id)
