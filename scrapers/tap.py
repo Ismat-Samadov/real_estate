@@ -337,7 +337,7 @@ class TapAzScraper:
                     for pattern in metro_patterns:
                         metro_match = re.search(pattern, value_text, re.IGNORECASE)
                         if metro_match:
-                            data['metro_station'] = metro_match.group(1).strip()
+                            data['metro_station'] = metro_match.group(1)
                             break
                             
                     # If location contains address-like information, update address field
