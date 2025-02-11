@@ -21,10 +21,10 @@ jobs:
       MAX_RETRIES: ${{ secrets.MAX_RETRIES }}
       LOGGING_LEVEL: ${{ secrets.LOGGING_LEVEL }}
       SCRAPER_PAGES: ${{ secrets.SCRAPER_PAGES }}
-      BRIGHT_DATA_USERNAME: ${{ secrets.BRIGHT_DATA_USERNAME }}
-      BRIGHT_DATA_PASSWORD: ${{ secrets.BRIGHT_DATA_PASSWORD }}
       PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
       PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
     steps:
       - name: Checkout code
@@ -41,8 +41,14 @@ jobs:
       - name: Clean and prepare directory
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            rm -rf /var/www/scraper/* 
-            mkdir -p /var/www/scraper
+            mkdir -p /var/www/scraper/logs
+            if [ -d "/var/www/scraper/venv" ]; then
+              mv /var/www/scraper/venv /var/www/scraper/venv_backup
+            fi
+            rm -rf /var/www/scraper/*
+            if [ -d "/var/www/scraper/venv_backup" ]; then
+              mv /var/www/scraper/venv_backup /var/www/scraper/venv
+            fi
           '
 
       - name: Deploy files
@@ -57,28 +63,36 @@ jobs:
           echo "MAX_RETRIES=${{ secrets.MAX_RETRIES }}" >> .env
           echo "LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}" >> .env
           echo "SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}" >> .env
-          echo "BRIGHT_DATA_USERNAME=${{ secrets.BRIGHT_DATA_USERNAME }}" >> .env
-          echo "BRIGHT_DATA_PASSWORD=${{ secrets.BRIGHT_DATA_PASSWORD }}" >> .env
-          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
-          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
           echo "PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}" >> .env
           echo "PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}" >> .env
-          
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
 
           tar czf deploy.tar.gz \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='*.pyc' \
             --exclude='__pycache__' \
-            LICENSE README.md main.py bright_data_proxy.py utils.py proxy_handler.py telegram_reporter.py run_scraper.sh requirements.txt .env \
+            LICENSE README.md main.py utils.py proxy_handler.py \
+            telegram_reporter.py requirements.txt .env supervisor.conf \
             scrapers/
 
           scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
+          
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper && 
+            cd /var/www/scraper &&
             tar xzf deploy.tar.gz &&
             rm deploy.tar.gz &&
-            mkdir -p logs &&
-            chmod 600 .env
-            chmod +x run_scraper.sh
+            chmod 600 .env &&
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+              source venv/bin/activate
+              pip install --upgrade pip
+              pip install -r requirements.txt
+              deactivate
+            fi &&
+            sudo cp supervisor.conf /etc/supervisor/conf.d/realestate_scraper.conf &&
+            sudo supervisorctl reread &&
+            sudo supervisorctl update &&
+            sudo supervisorctl restart realestate_scraper
           '
