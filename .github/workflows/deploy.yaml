@@ -38,9 +38,16 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Clean and prepare directory
+      - name: Setup Server
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            # Install supervisor if not present
+            if ! command -v supervisord &> /dev/null; then
+              sudo apt-get update
+              sudo apt-get install -y supervisor
+            fi
+            
+            # Create necessary directories
             mkdir -p /var/www/scraper/logs
             if [ -d "/var/www/scraper/venv" ]; then
               mv /var/www/scraper/venv /var/www/scraper/venv_backup
@@ -91,7 +98,13 @@ jobs:
               pip install -r requirements.txt
               deactivate
             fi &&
+            # Ensure supervisor directories exist
+            sudo mkdir -p /etc/supervisor/conf.d &&
+            # Copy supervisor config
             sudo cp supervisor.conf /etc/supervisor/conf.d/realestate_scraper.conf &&
+            # Ensure supervisor is running
+            sudo service supervisor start &&
+            # Update supervisor
             sudo supervisorctl reread &&
             sudo supervisorctl update &&
             sudo supervisorctl restart realestate_scraper
