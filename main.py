@@ -37,10 +37,10 @@ scraper_configs = {
     'bina.az': {
         'class': OptimizedBinaScraper,
         'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(19, 0), 'interval': 2},  # Peak hours every 2 min
-            {'start': datetime.time(19, 0), 'end': datetime.time(1, 0), 'interval': 5},  # Evening every 5 min
-            {'start': datetime.time(1, 0), 'end': datetime.time(2, 0), 'interval': 5},   # Night every 5 min
-            {'start': datetime.time(2, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Early morning every 30 min
+            {'start': datetime.time(8, 0), 'end': datetime.time(15, 0), 'interval': 2},  # Peak hours every 2 min
+            {'start': datetime.time(19, 0), 'end': datetime.time(3, 0), 'interval': 5},  # Evening every 5 min
+            {'start': datetime.time(0, 0), 'end': datetime.time(4, 0), 'interval': 5},   # Night every 5 min
+            {'start': datetime.time(6, 0), 'end': datetime.time(7, 0), 'interval': 30}   # Early morning every 30 min
         ],
         'pages': 1
     },
