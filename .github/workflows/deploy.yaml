@@ -38,19 +38,20 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Install Required Packages
-        run: |
-          set -e
-          echo "Installing required packages on remote server..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+          - name: Install Required Packages
+          run: |
             set -e
-            echo "Updating package lists..."
-            sudo yum update -y || { echo "Failed to update packages"; exit 1; }
-            echo "Installing Python and Supervisor packages..."
-            sudo yum install -y python3-pip python3-devel gcc supervisor || { echo "Failed to install required packages"; exit 1; }
-            echo "Enabling supervisord service..."
-            sudo systemctl enable supervisord || { echo "Failed to enable supervisord"; exit 1; }
-          ' || { echo "Failed to execute remote package installation commands"; exit 1; }
+            echo "Installing required packages on remote server..."
+            ssh -T -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<'EOF'
+          set -e
+          echo "Updating package lists..."
+          sudo yum update -y || { echo "Failed to update packages"; exit 1; }
+          echo "Installing Python and Supervisor packages..."
+          sudo yum install -y python3-pip python3-devel gcc supervisor || { echo "Failed to install required packages"; exit 1; }
+          echo "Enabling supervisord service..."
+          sudo systemctl enable supervisord || { echo "Failed to enable supervisord"; exit 1; }
+          EOF
+          
 
           - name: Configure Supervisord
           run: |
