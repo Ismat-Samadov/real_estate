@@ -54,32 +54,34 @@ jobs:
 
       - name: Configure Supervisord
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'bash -s' << 'EOSSH'
             sudo mkdir -p /etc/supervisord.d
             sudo mkdir -p /var/log/supervisor
             sudo mkdir -p /run/supervisor
             
-            # Create base supervisord config if it doesn't exist
             if [ ! -f /etc/supervisord.conf ]; then
-              echo "[unix_http_server]
-              file=/run/supervisor/supervisor.sock
-              chmod=0700
+              cat > supervisord.conf << 'EOL'
+[unix_http_server]
+file=/run/supervisor/supervisor.sock
+chmod=0700
 
-              [supervisord]
-              logfile=/var/log/supervisor/supervisord.log
-              pidfile=/var/run/supervisord.pid
-              childlogdir=/var/log/supervisor
+[supervisord]
+logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+childlogdir=/var/log/supervisor
 
-              [rpcinterface:supervisor]
-              supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
-              [supervisorctl]
-              serverurl=unix:///run/supervisor/supervisor.sock
+[supervisorctl]
+serverurl=unix:///run/supervisor/supervisor.sock
 
-              [include]
-              files = /etc/supervisord.d/*.ini" | sudo tee /etc/supervisord.conf
+[include]
+files = /etc/supervisord.d/*.ini
+EOL
+              sudo mv supervisord.conf /etc/supervisord.conf
             fi
-          '
+EOSSH
 
       - name: Create Directory Structure
         run: |
