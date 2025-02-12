@@ -40,7 +40,7 @@ jobs:
 
       - name: Install Required Packages
         run: |
-          set -e  # Exit on any error
+          set -e
           echo "Installing required packages on remote server..."
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
             set -e
@@ -54,31 +54,31 @@ jobs:
 
       - name: Configure Supervisord
         run: |
-          CONFIG="[unix_http_server]
-  file=/run/supervisor/supervisor.sock
-  chmod=0700
+          echo "Configuring supervisord on remote server..."
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<'REMOTEEOF'
+sudo mkdir -p /etc/supervisord.d /var/log/supervisor /run/supervisor
+if [ ! -f /etc/supervisord.conf ]; then
+  sudo tee /etc/supervisord.conf > /dev/null <<'CONFIGEOF'
+[unix_http_server]
+file=/run/supervisor/supervisor.sock
+chmod=0700
 
 [supervisord]
-  logfile=/var/log/supervisor/supervisord.log
-  pidfile=/var/run/supervisord.pid
-  childlogdir=/var/log/supervisor
+logfile=/var/log/supervisor/supervisord.log
+pidfile=/var/run/supervisord.pid
+childlogdir=/var/log/supervisor
 
 [rpcinterface:supervisor]
-  supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
 [supervisorctl]
-  serverurl=unix:///run/supervisor/supervisor.sock
+serverurl=unix:///run/supervisor/supervisor.sock
 
 [include]
-  files = /etc/supervisord.d/*.ini"
-          
-          echo "Configuring supervisord on remote server..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} "
-            sudo mkdir -p /etc/supervisord.d /var/log/supervisor /run/supervisor &&
-            if [ ! -f /etc/supervisord.conf ]; then
-              echo \"$CONFIG\" | sudo tee /etc/supervisord.conf;
-            fi
-          "
+files = /etc/supervisord.d/*.ini
+CONFIGEOF
+fi
+REMOTEEOF
 
       - name: Create Directory Structure
         run: |
@@ -91,8 +91,9 @@ jobs:
       - name: Deploy Application Files
         run: |
           echo "Creating local environment and supervisor configuration files..."
-          # Create .env file locally
-          cat > .env << 'EOL'
+
+          # Create local .env file
+          cat > .env <<'EOL'
 DB_NAME=${{ secrets.DB_NAME }}
 DB_HOST=${{ secrets.DB_HOST }}
 DB_USER=${{ secrets.DB_USER }}
@@ -112,9 +113,9 @@ EOL
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'whoami' > server_user.txt
           REMOTE_USER=$(cat server_user.txt)
           
-          # Create supervisor configuration for the scraper;
-          # using redirect_stderr=true to merge stderr with stdout (no separate stderr_logfile)
-          cat > realestate_scraper.ini << EOL
+          # Create local supervisor configuration for the scraper.
+          # Note: We use redirect_stderr=true and omit a separate stderr_logfile.
+          cat > realestate_scraper.ini <<EOL
 [program:realestate_scraper]
 command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
 directory=/var/www/scraper
