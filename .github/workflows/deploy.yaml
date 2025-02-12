@@ -45,9 +45,9 @@ jobs:
           ssh -T -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<'EOF'
           set -e
           echo "Updating package lists..."
-          sudo yum update -y || { echo "Failed to update packages"; exit 1; }
+          sudo dnf update -y || { echo "Failed to update packages"; exit 1; }
           echo "Installing Python and Supervisor packages..."
-          sudo yum install -y python3-pip python3-devel gcc supervisor || { echo "Failed to install required packages"; exit 1; }
+          sudo dnf install -y python3-pip python3-devel gcc supervisor || { echo "Failed to install required packages"; exit 1; }
           echo "Enabling supervisord service..."
           sudo systemctl enable supervisord || { echo "Failed to enable supervisord"; exit 1; }
           EOF
@@ -114,7 +114,7 @@ jobs:
           REMOTE_USER=$(cat server_user.txt)
           
           # Create local supervisor configuration for the scraper.
-          # Note: We use redirect_stderr=true and omit a separate stderr_logfile.
+          # We use redirect_stderr=true and omit a separate stderr_logfile.
           cat > realestate_scraper.ini <<EOL
           [program:realestate_scraper]
           command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
