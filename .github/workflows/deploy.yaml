@@ -56,37 +56,37 @@ jobs:
         run: |
           echo "Configuring supervisord on remote server..."
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} <<'REMOTEEOF'
-sudo mkdir -p /etc/supervisord.d /var/log/supervisor /run/supervisor
-if [ ! -f /etc/supervisord.conf ]; then
-  sudo tee /etc/supervisord.conf > /dev/null <<'CONFIGEOF'
-[unix_http_server]
-file=/run/supervisor/supervisor.sock
-chmod=0700
+          sudo mkdir -p /etc/supervisord.d /var/log/supervisor /run/supervisor
+          if [ ! -f /etc/supervisord.conf ]; then
+            sudo tee /etc/supervisord.conf > /dev/null <<'CONFIGEOF'
+          [unix_http_server]
+          file=/run/supervisor/supervisor.sock
+          chmod=0700
 
-[supervisord]
-logfile=/var/log/supervisor/supervisord.log
-pidfile=/var/run/supervisord.pid
-childlogdir=/var/log/supervisor
+          [supervisord]
+          logfile=/var/log/supervisor/supervisord.log
+          pidfile=/var/run/supervisord.pid
+          childlogdir=/var/log/supervisor
 
-[rpcinterface:supervisor]
-supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+          [rpcinterface:supervisor]
+          supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
 
-[supervisorctl]
-serverurl=unix:///run/supervisor/supervisor.sock
+          [supervisorctl]
+          serverurl=unix:///run/supervisor/supervisor.sock
 
-[include]
-files = /etc/supervisord.d/*.ini
-CONFIGEOF
-fi
-REMOTEEOF
+          [include]
+          files = /etc/supervisord.d/*.ini
+          CONFIGEOF
+          fi
+          REMOTEEOF
 
-      - name: Create Directory Structure
-        run: |
-          echo "Creating application directory structure on remote server..."
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            sudo mkdir -p /var/www/scraper/logs &&
-            sudo chown -R ${USER}:${USER} /var/www/scraper
-          '
+                - name: Create Directory Structure
+                  run: |
+                    echo "Creating application directory structure on remote server..."
+                    ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+                      sudo mkdir -p /var/www/scraper/logs &&
+                      sudo chown -R ${USER}:${USER} /var/www/scraper
+                    '
 
       - name: Deploy Application Files
         run: |
@@ -94,20 +94,20 @@ REMOTEEOF
 
           # Create local .env file
           cat > .env <<'EOL'
-DB_NAME=${{ secrets.DB_NAME }}
-DB_HOST=${{ secrets.DB_HOST }}
-DB_USER=${{ secrets.DB_USER }}
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-DB_PORT=${{ secrets.DB_PORT }}
-REQUEST_DELAY=${{ secrets.REQUEST_DELAY }}
-MAX_RETRIES=${{ secrets.MAX_RETRIES }}
-LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}
-SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}
-PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
-PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
-TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
-EOL
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          REQUEST_DELAY=${{ secrets.REQUEST_DELAY }}
+          MAX_RETRIES=${{ secrets.MAX_RETRIES }}
+          LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}
+          SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}
+          PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
+          PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          EOL
 
           # Retrieve the actual remote username
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'whoami' > server_user.txt
@@ -116,18 +116,18 @@ EOL
           # Create local supervisor configuration for the scraper.
           # Note: We use redirect_stderr=true and omit a separate stderr_logfile.
           cat > realestate_scraper.ini <<EOL
-[program:realestate_scraper]
-command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
-directory=/var/www/scraper
-user=${REMOTE_USER}
-autostart=true
-autorestart=true
-startretries=3
-startsecs=10
-redirect_stderr=true
-stdout_logfile=/var/www/scraper/logs/supervisor.log
-environment=PYTHONPATH=/var/www/scraper,PYTHONUNBUFFERED=1
-EOL
+            [program:realestate_scraper]
+            command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
+            directory=/var/www/scraper
+            user=${REMOTE_USER}
+            autostart=true
+            autorestart=true
+            startretries=3
+            startsecs=10
+            redirect_stderr=true
+            stdout_logfile=/var/www/scraper/logs/supervisor.log
+            environment=PYTHONPATH=/var/www/scraper,PYTHONUNBUFFERED=1
+            EOL
 
           echo "Creating deployment archive..."
           tar -czf deploy.tar.gz \
