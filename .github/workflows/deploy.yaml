@@ -40,11 +40,17 @@ jobs:
 
       - name: Install Required Packages
         run: |
+          set -e  # Exit on any error
+          echo "Installing required packages..."
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            sudo yum update -y
-            sudo yum install -y python3-pip python3-devel gcc supervisor
-            sudo systemctl enable supervisord
-          '
+            set -e  # Exit on any error
+            echo "Updating package lists..."
+            sudo yum update -y || { echo "Failed to update packages"; exit 1; }
+            echo "Installing Python and Supervisor packages..."
+            sudo yum install -y python3-pip python3-devel gcc supervisor || { echo "Failed to install required packages"; exit 1; }
+            echo "Enabling supervisord service..."
+            sudo systemctl enable supervisord || { echo "Failed to enable supervisord"; exit 1; }
+          ' || { echo "Failed to execute remote commands"; exit 1; }
 
       - name: Configure Supervisord
         run: |
@@ -157,20 +163,38 @@ jobs:
 
       - name: Start Services
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            # Ensure supervisor directories exist with correct permissions
+          set -e  # Exit on any error
+          echo "Starting services..."
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
+            set -e  # Exit on any error
+            
+            echo "Creating supervisor directories..."
             sudo mkdir -p /run/supervisor
             sudo chmod 755 /run/supervisor
             
-            # Restart supervisord
-            sudo systemctl restart supervisord
+            echo "Stopping existing supervisord process if running..."
+            sudo pkill supervisord || true
+            sleep 2
+            
+            echo "Starting supervisord..."
+            sudo /usr/bin/supervisord -c /etc/supervisord.conf || { echo "Failed to start supervisord"; exit 1; }
             sleep 5
             
-            # Update and start our application
-            sudo supervisorctl reread
-            sudo supervisorctl update
-            sudo supervisorctl restart realestate_scraper
+            echo "Checking supervisord status..."
+            sudo systemctl status supervisord || { echo "Supervisord not running"; exit 1; }
             
-            # Check status
-            sudo supervisorctl status realestate_scraper
-          '
+            echo "Updating supervisor configuration..."
+            sudo supervisorctl reread || { echo "Failed to reread supervisor config"; exit 1; }
+            sudo supervisorctl update || { echo "Failed to update supervisor config"; exit 1; }
+            
+            echo "Starting scraper application..."
+            sudo supervisorctl restart realestate_scraper || { echo "Failed to restart scraper"; exit 1; }
+            
+            echo "Checking application status..."
+            status=$(sudo supervisorctl status realestate_scraper)
+            echo "$status"
+            if ! echo "$status" | grep -q "RUNNING"; then
+              echo "Application failed to start properly"
+              exit 1
+            fi
+          ' || { echo "Failed to execute remote commands"; exit 1; }
