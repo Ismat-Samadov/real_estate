@@ -100,12 +100,15 @@ jobs:
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOL
 
-          # Create supervisor config
+          # Create supervisor config with correct user
+          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} 'whoami' > server_user.txt
+          SERVER_USER=$(cat server_user.txt)
+          
           cat > realestate_scraper.ini << EOL
           [program:realestate_scraper]
           command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
           directory=/var/www/scraper
-          user=${{ secrets.SERVER_USER }}
+          user=${SERVER_USER}
           autostart=true
           autorestart=true
           startretries=3
@@ -169,12 +172,19 @@ jobs:
             sudo pkill supervisord || true
             sleep 2
             
+            echo "Checking supervisor config permissions..."
+            ls -l /etc/supervisord.conf
+            ls -l /etc/supervisord.d/
+            
             echo "Starting supervisord..."
-            sudo /usr/bin/supervisord -c /etc/supervisord.conf || { echo "Failed to start supervisord"; exit 1; }
+            sudo /usr/bin/supervisord -c /etc/supervisord.conf -n || { echo "Failed to start supervisord"; exit 1; }
             sleep 5
             
             echo "Checking supervisord status..."
-            sudo systemctl status supervisord || { echo "Supervisord not running"; exit 1; }
+            sudo systemctl status supervisord --no-pager || { echo "Supervisord not running"; exit 1; }
+            
+            echo "Checking supervisord logs..."
+            sudo tail -n 50 /var/log/supervisor/supervisord.log
             
             echo "Updating supervisor configuration..."
             sudo supervisorctl reread || { echo "Failed to reread supervisor config"; exit 1; }
@@ -188,6 +198,8 @@ jobs:
             echo "$status"
             if ! echo "$status" | grep -q "RUNNING"; then
               echo "Application failed to start properly"
+              echo "Checking application logs..."
+              sudo tail -n 50 /var/www/scraper/logs/supervisor.log
               exit 1
             fi
           ' || { echo "Failed to execute remote commands"; exit 1; }
