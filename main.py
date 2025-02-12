@@ -55,8 +55,7 @@ scraper_configs = {
     'tap.az': {
         'class': TapAzScraper,
         'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(22, 0), 'interval': 10},  # Day time every 10 min
-            {'start': datetime.time(22, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Night time every 30 min
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 19},  # Day time every 19 min
         ],
         'pages': 1
     },
@@ -70,7 +69,7 @@ scraper_configs = {
     'lalafo.az': {
         'class': LalafoScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 min all day
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 15}  # Every 15 min all day
         ],
         'pages': 1
     },
@@ -84,8 +83,7 @@ scraper_configs = {
     'unvan.az': {
         'class': UnvanScraper,
         'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 15},
-            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 30}
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 720}
         ],
         'pages': 1
     },
@@ -99,15 +97,14 @@ scraper_configs = {
     'ipoteka.az': {
         'class': IpotekaScraper,
         'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 20},
-            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 45}
+            {'start': datetime.time(0, 0), 'end': datetime.time(9, 0), 'interval': 45}
         ],
         'pages': 1
     },
     'vipemlak.az': {
         'class': VipEmlakScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 480}  # Every 8 hours
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 480}  # Every 8 hours
         ],
         'pages': 1
     }
