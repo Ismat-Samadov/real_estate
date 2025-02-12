@@ -3,28 +3,55 @@ name: Deploy Real Estate Scraper
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+      - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
 
 jobs:
+  pre-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Lint Python code
+        run: |
+          pip install flake8
+          flake8 . --count --max-line-length=120 --statistics
+
+      - name: Run tests
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+          pytest tests/
+
   deploy:
+    needs: pre-deploy
     runs-on: ubuntu-latest
     
     env:
       SERVER_IP: ${{ secrets.SERVER_IP }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
-      DB_NAME: ${{ secrets.DB_NAME }}
-      DB_HOST: ${{ secrets.DB_HOST }}
-      DB_USER: ${{ secrets.DB_USER }}
-      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-      DB_PORT: ${{ secrets.DB_PORT }}
-      REQUEST_DELAY: ${{ secrets.REQUEST_DELAY }}
-      MAX_RETRIES: ${{ secrets.MAX_RETRIES }}
-      LOGGING_LEVEL: ${{ secrets.LOGGING_LEVEL }}
-      SCRAPER_PAGES: ${{ secrets.SCRAPER_PAGES }}
-      PROXY_USERNAME: ${{ secrets.PROXY_USERNAME }}
-      PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      APP_PATH: /var/www/scraper
+      LOG_PATH: /var/www/scraper/logs
+      VENV_PATH: /var/www/scraper/venv
 
     steps:
       - name: Checkout code
@@ -36,124 +63,184 @@ jobs:
           chmod 700 ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$SERVER_IP" >> ~/.ssh/known_hosts
+
+      - name: Verify server connectivity
+        run: |
+          if ! ssh -i ~/.ssh/deploy_key -o ConnectTimeout=10 $SERVER_USER@$SERVER_IP 'exit'; then
+            echo "Failed to connect to server"
+            exit 1
+          fi
 
       - name: Create Directory Structure
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            # Create necessary directories
-            sudo mkdir -p /var/www/scraper
-            sudo mkdir -p /var/www/scraper/logs
-            sudo chown -R $USER:$USER /var/www/scraper
-          '
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            sudo mkdir -p $APP_PATH/{logs,backups,config}
+            sudo chown -R $SERVER_USER:$SERVER_USER $APP_PATH
+            sudo chmod -R 755 $APP_PATH
+          "
 
-      - name: Backup Existing Environment
+      - name: Backup Existing Installation
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            if [ -d "/var/www/scraper/venv" ]; then
-              mv /var/www/scraper/venv /var/www/scraper/venv_backup
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            if [ -d \"$APP_PATH\" ]; then
+              tar -czf $APP_PATH/backups/backup_\${TIMESTAMP}.tar.gz \
+                --exclude='venv' \
+                --exclude='*.pyc' \
+                --exclude='__pycache__' \
+                --exclude='logs/*' \
+                --exclude='backups/*' \
+                $APP_PATH/
             fi
-            rm -rf /var/www/scraper/*
-            if [ -d "/var/www/scraper/venv_backup" ]; then
-              mv /var/www/scraper/venv_backup /var/www/scraper/venv
-            fi
-          '
+          "
 
-      - name: Setup Supervisor
+      - name: Generate Environment File
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            # Stop and clean existing supervisor processes
-            sudo supervisorctl stop all || true
-            sudo systemctl stop supervisord || true
-            sudo pkill supervisord || true
-            sudo rm -f /etc/supervisord.d/*.ini
+          cat << EOF > .env
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          REQUEST_DELAY=${{ secrets.REQUEST_DELAY }}
+          MAX_RETRIES=${{ secrets.MAX_RETRIES }}
+          LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}
+          SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}
+          PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
+          PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
+          TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
+          DEPLOYMENT_ENV=${{ github.event.inputs.environment || 'production' }}
+          DEPLOYED_AT=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          GITHUB_SHA=${{ github.sha }}
+          EOF
 
-            # Create supervisor config
-            sudo tee /etc/supervisord.d/realestate_scraper.ini << EOF
-[program:realestate_scraper]
-command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
-directory=/var/www/scraper
-user=$USER
-autostart=true
-autorestart=true
-startretries=3
-startsecs=10
-redirect_stderr=true
-stdout_logfile=/var/www/scraper/logs/supervisor.log
-stderr_logfile=/var/www/scraper/logs/supervisor.err.log
-environment=PYTHONPATH="/var/www/scraper",PYTHONUNBUFFERED="1"
-EOF
+      - name: Setup Supervisor Configuration
+        run: |
+          cat << EOF > supervisor.conf
+          [program:realestate_scraper]
+          command=%(ENV_VENV_PATH)s/bin/python %(ENV_APP_PATH)s/main.py
+          directory=%(ENV_APP_PATH)s
+          user=$SERVER_USER
+          autostart=true
+          autorestart=true
+          startretries=3
+          startsecs=10
+          stopwaitsecs=30
+          killasgroup=true
+          stopasgroup=true
+          redirect_stderr=true
+          stdout_logfile=%(ENV_LOG_PATH)s/supervisor.log
+          stderr_logfile=%(ENV_LOG_PATH)s/supervisor.err.log
+          stdout_logfile_maxbytes=50MB
+          stdout_logfile_backups=10
+          environment=
+            PYTHONPATH="%(ENV_APP_PATH)s",
+            PYTHONUNBUFFERED="1",
+            $(cat .env | tr '\n' ',')
+          EOF
 
-            # Update main supervisor config if needed
-            sudo grep -q "^\[include\]" /etc/supervisord.conf || echo -e "\n[include]\nfiles = /etc/supervisord.d/*.ini" | sudo tee -a /etc/supervisord.conf
-          '
+          scp -i ~/.ssh/deploy_key supervisor.conf $SERVER_USER@$SERVER_IP:/tmp/
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            sudo mv /tmp/supervisor.conf /etc/supervisord.d/realestate_scraper.ini
+            sudo chmod 644 /etc/supervisord.d/realestate_scraper.ini
+          "
 
       - name: Deploy Application Files
         run: |
-          # Create environment file
-          echo "DB_NAME=${{ secrets.DB_NAME }}" > .env
-          echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
-          echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-          echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
-          echo "REQUEST_DELAY=${{ secrets.REQUEST_DELAY }}" >> .env
-          echo "MAX_RETRIES=${{ secrets.MAX_RETRIES }}" >> .env
-          echo "LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}" >> .env
-          echo "SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}" >> .env
-          echo "PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}" >> .env
-          echo "PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}" >> .env
-          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
-          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> .env
-
           # Create deployment package
           tar czf deploy.tar.gz \
             --exclude='.git' \
             --exclude='.github' \
             --exclude='*.pyc' \
             --exclude='__pycache__' \
+            --exclude='tests' \
+            --exclude='*.log' \
             LICENSE README.md main.py utils.py proxy_handler.py \
             telegram_reporter.py requirements.txt .env \
             scrapers/
 
-          # Upload package
-          scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
+          # Upload and extract
+          scp -i ~/.ssh/deploy_key deploy.tar.gz $SERVER_USER@$SERVER_IP:/tmp/
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            cd $APP_PATH &&
+            tar xzf /tmp/deploy.tar.gz &&
+            rm /tmp/deploy.tar.gz &&
+            chmod 600 .env
+          "
 
-      - name: Install and Configure
+      - name: Setup Python Environment
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            cd /var/www/scraper &&
-            tar xzf deploy.tar.gz &&
-            rm deploy.tar.gz &&
-            chmod 600 .env &&
-            
-            # Setup Python environment
-            if [ ! -d "venv" ]; then
-              python3 -m venv venv
-              source venv/bin/activate
-              pip install --upgrade pip
-              pip install -r requirements.txt
-              deactivate
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            if [ ! -d \"$VENV_PATH\" ]; then
+              python3 -m venv $VENV_PATH
             fi
-            
-            # Set permissions
-            sudo chown -R $USER:$USER /var/www/scraper
-            sudo chmod -R 755 /var/www/scraper
-            sudo chmod 600 /var/www/scraper/.env
-          '
+            source $VENV_PATH/bin/activate
+            pip install --upgrade pip
+            pip install -r $APP_PATH/requirements.txt
+            deactivate
+          "
+
+      - name: Configure Log Rotation
+        run: |
+          cat << EOF > logrotate.conf
+          $LOG_PATH/*.log {
+            daily
+            rotate 14
+            compress
+            delaycompress
+            missingok
+            notifempty
+            create 0644 $SERVER_USER $SERVER_USER
+          }
+          EOF
+
+          scp -i ~/.ssh/deploy_key logrotate.conf $SERVER_USER@$SERVER_IP:/tmp/
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            sudo mv /tmp/logrotate.conf /etc/logrotate.d/realestate_scraper
+            sudo chmod 644 /etc/logrotate.d/realestate_scraper
+          "
 
       - name: Start Services
         run: |
-          ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            # Restart and enable supervisor
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
             sudo systemctl enable supervisord
             sudo systemctl restart supervisord
             sleep 5
-            
-            # Start our application
             sudo supervisorctl reread
             sudo supervisorctl update
             sudo supervisorctl restart realestate_scraper
-            
-            # Verify status
-            sudo supervisorctl status realestate_scraper
-          '
+
+            # Verify deployment
+            if ! sudo supervisorctl status realestate_scraper | grep -q RUNNING; then
+              echo 'Deployment verification failed: Service is not running'
+              exit 1
+            fi
+          "
+
+      - name: Send Deployment Notification
+        if: always()
+        run: |
+          DEPLOY_STATUS=\${{ job.status }}
+          MESSAGE="Deployment to ${{ github.event.inputs.environment || 'production' }} \${DEPLOY_STATUS}
+          Commit: ${{ github.sha }}
+          Workflow: ${{ github.workflow }}
+          Triggered by: ${{ github.actor }}"
+          
+          curl -X POST \
+            -H 'Content-Type: application/json' \
+            -d "{\"chat_id\": \"${{ secrets.TELEGRAM_CHAT_ID }}\", \"text\": \"\${MESSAGE}\"}" \
+            https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage
+
+  cleanup:
+    if: always()
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup Old Backups
+        run: |
+          ssh -i ~/.ssh/deploy_key $SERVER_USER@$SERVER_IP "
+            find $APP_PATH/backups -name 'backup_*.tar.gz' -mtime +7 -delete
+            find $LOG_PATH -name '*.log.*' -mtime +14 -delete
+          "
