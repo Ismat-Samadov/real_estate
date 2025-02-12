@@ -570,8 +570,66 @@ def get_current_interval(scraper_name: str, active_periods: List[Dict]) -> int:
     
     return active_periods[0]['interval']  # Default to first period interval
 
+async def run_single_scraper(name: str, config: dict, proxy_manager: ProxyHandler, connection, reporter: TelegramReporter, overall_stats: dict):
+    """Run a single scraper continuously with its configured interval"""
+    logger = logging.getLogger(__name__)
+    
+    while True:
+        try:
+            # Get current interval for this scraper
+            interval = get_current_interval(name, config['active_periods'])
+            
+            scraper_start = time.time()
+            logger.info(f"Starting {name} scraper")
+            
+            # Initialize and run scraper
+            scraper = config['class']()
+            proxy_manager.apply_to_scraper(scraper)
+            results = await scraper.run(pages=config['pages'])
+            
+            if results:
+                # Update source_website for all results
+                for result in results:
+                    result['source_website'] = name
+                
+                # Save results to database
+                db_stats = save_listings_to_db(connection, results)
+                
+                # Update overall statistics
+                overall_stats['success_count'][name] = len(results)
+                overall_stats['website_stats'][name].update(db_stats['website_stats'][name])
+                
+                # Calculate and log metrics
+                scraper_duration = time.time() - scraper_start
+                avg_time = scraper_duration / len(results) if results else 0
+                logger.info(f"{name} completed in {scraper_duration:.2f}s (avg {avg_time:.2f}s per listing)")
+                
+                # Send individual website report
+                website_stats = {
+                    'success_count': {name: len(results)},
+                    'error_count': overall_stats['error_count'],
+                    'error_details': overall_stats['error_details'],
+                    'duration': scraper_duration,
+                    'avg_time_per_listing': avg_time
+                }
+                website_db_stats = {
+                    'successful_inserts': db_stats['successful_inserts'],
+                    'failed': db_stats['failed'],
+                    'website_stats': {name: db_stats['website_stats'][name]}
+                }
+                await reporter.send_report(website_stats, website_db_stats)
+            
+        except Exception as e:
+            overall_stats['error_count'][name] += 1
+            error_type = type(e).__name__
+            overall_stats['error_details'][name][error_type] += 1
+            logger.error(f"Error in {name}: {str(e)}", exc_info=True)
+        
+        # Wait for the configured interval before next run
+        await asyncio.sleep(interval * 60)
 
 async def run_scrapers():
+    """Run all scrapers concurrently"""
     logger = logging.getLogger(__name__)
     start_time = time.time()
     
@@ -590,6 +648,8 @@ async def run_scrapers():
     }
 
     connection = None
+    tasks = []
+    
     try:
         # Initialize database connection
         connection = get_db_connection()
@@ -603,68 +663,23 @@ async def run_scrapers():
         
         reporter = TelegramReporter()
         
-        # Process one website at a time
+        # Create tasks for each scraper
         for name, config in scraper_configs.items():
-            try:
-                # Get current interval for this scraper
-                interval = get_current_interval(name, config['active_periods'])
-                if interval == 0:  # Skip if outside active period
-                    logger.info(f"Skipping {name} - outside active period")
-                    continue
-                
-                scraper_start = time.time()
-                logger.info(f"Starting {name} scraper")
-                
-                # Initialize and run scraper
-                scraper = config['class']()
-                proxy_manager.apply_to_scraper(scraper)
-                results = await scraper.run(pages=config['pages'])
-                
-                if results:
-                    # Update source_website for all results
-                    for result in results:
-                        result['source_website'] = name
-                    
-                    # Save results to database
-                    db_stats = save_listings_to_db(connection, results)
-                    
-                    # Update overall statistics
-                    overall_stats['success_count'][name] = len(results)
-                    overall_stats['website_stats'][name].update(db_stats['website_stats'][name])
-                    
-                    # Calculate and log metrics
-                    scraper_duration = time.time() - scraper_start
-                    avg_time = scraper_duration / len(results) if results else 0
-                    logger.info(f"{name} completed in {scraper_duration:.2f}s (avg {avg_time:.2f}s per listing)")
-                    
-                    # Send individual website report
-                    website_stats = {
-                        'success_count': {name: len(results)},
-                        'error_count': overall_stats['error_count'],
-                        'error_details': overall_stats['error_details'],
-                        'duration': scraper_duration,
-                        'avg_time_per_listing': avg_time
-                    }
-                    website_db_stats = {
-                        'successful_inserts': db_stats['successful_inserts'],
-                        'failed': db_stats['failed'],
-                        'website_stats': {name: db_stats['website_stats'][name]}
-                    }
-                    await reporter.send_report(website_stats, website_db_stats)
-                
-                # Wait for the appropriate interval before next website
-                await asyncio.sleep(interval * 60)
-                
-            except Exception as e:
-                overall_stats['error_count'][name] += 1
-                error_type = type(e).__name__
-                overall_stats['error_details'][name][error_type] += 1
-                logger.error(f"Error in {name}: {str(e)}", exc_info=True)
-            
-            finally:
-                # Add small delay between websites
-                await asyncio.sleep(random.uniform(2, 5))
-    
+            task = asyncio.create_task(
+                run_single_scraper(
+                    name, 
+                    config, 
+                    proxy_manager, 
+                    connection, 
+                    reporter, 
+                    overall_stats
+                )
+            )
+            tasks.append(task)
+        
+        # Wait for all scrapers to complete (they run indefinitely)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
     
@@ -680,7 +695,7 @@ async def run_scrapers():
         overall_stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
         
         return overall_stats
-
+    
 async def main():
     """Main async function to run scrapers"""
     logger = setup_logging()
