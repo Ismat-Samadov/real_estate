@@ -47,7 +47,7 @@ scraper_configs = {
     'arenda.az': {
         'class': OptimizedArendaScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 15}  # Every 15 minutes
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 minutes
 
         ],
         'pages': 1
@@ -55,42 +55,42 @@ scraper_configs = {
     'tap.az': {
         'class': TapAzScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 19},  # Day time every 19 min
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 23},  # Day time every 23 min
         ],
         'pages': 1
     },
     'emlak.az': {
         'class': EmlakAzScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 30}  # Every 30 minutes
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 30}  # Every 30 minutes
         ],
         'pages': 1
     },
     'lalafo.az': {
         'class': LalafoScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 15}  # Every 15 min all day
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 min all day
         ],
         'pages': 1
     },
     'ev10.az': {
         'class': EV10Scraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 720}  # Every 12 hours
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 720}  # Every 12 hours
         ],
         'pages': 1
     },
     'unvan.az': {
         'class': UnvanScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 720}
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 720}
         ],
         'pages': 1
     },
     'yeniemlak.az': {
         'class': YeniEmlakScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 6}  # Every 6 minutes
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 6}  # Every 6 minutes
         ],
         'pages': 1
     },
@@ -104,7 +104,7 @@ scraper_configs = {
     'vipemlak.az': {
         'class': VipEmlakScraper,
         'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 480}  # Every 8 hours
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 480}  # Every 8 hours
         ],
         'pages': 1
     }
