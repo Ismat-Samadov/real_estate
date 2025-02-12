@@ -38,17 +38,20 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-      - name: Setup Server and Install Supervisor
+      - name: Setup Server and Directory
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }} '
-            # Install supervisor properly
-            sudo apt-get update
-            sudo apt-get install -y supervisor
-            sudo systemctl enable supervisor
-            sudo systemctl start supervisor
+            # Install supervisor if not present
+            if ! command -v supervisorctl &> /dev/null; then
+              sudo dnf install -y supervisor
+            fi
 
+            # Enable and start supervisord
+            sudo systemctl enable supervisord
+            sudo systemctl start supervisord
+            
             # Create necessary directories
-            sudo mkdir -p /etc/supervisor/conf.d
+            sudo mkdir -p /etc/supervisord.d
             mkdir -p /var/www/scraper/logs
             
             # Backup virtualenv if exists
@@ -67,6 +70,21 @@ jobs:
 
       - name: Deploy files
         run: |
+          # Create supervisord config
+          echo "[program:realestate_scraper]
+          command=/var/www/scraper/venv/bin/python /var/www/scraper/main.py
+          directory=/var/www/scraper
+          user=scraper
+          autostart=true
+          autorestart=true
+          startretries=3
+          startsecs=10
+          redirect_stderr=true
+          stdout_logfile=/var/www/scraper/logs/supervisord.log
+          stdout_logfile_maxbytes=50MB
+          stdout_logfile_backups=10
+          environment=PYTHONPATH=/var/www/scraper,PYTHONUNBUFFERED=1" > realestate_scraper.ini
+
           # Create environment file
           echo "DB_NAME=${{ secrets.DB_NAME }}" > .env
           echo "DB_HOST=${{ secrets.DB_HOST }}" >> .env
@@ -88,7 +106,7 @@ jobs:
             --exclude='*.pyc' \
             --exclude='__pycache__' \
             LICENSE README.md main.py utils.py proxy_handler.py \
-            telegram_reporter.py requirements.txt .env supervisor.conf \
+            telegram_reporter.py requirements.txt .env realestate_scraper.ini \
             scrapers/
 
           scp -i ~/.ssh/deploy_key deploy.tar.gz ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_IP }}:/var/www/scraper/
@@ -110,16 +128,17 @@ jobs:
               deactivate
             fi &&
             
-            # Install supervisor config
-            sudo cp supervisor.conf /etc/supervisor/conf.d/realestate_scraper.conf &&
+            # Install supervisord config
+            sudo cp realestate_scraper.ini /etc/supervisord.d/ &&
             
             # Set correct permissions
-            sudo chown -R $USER:$USER /var/www/scraper &&
+            sudo chown -R scraper:scraper /var/www/scraper &&
             sudo chmod -R 755 /var/www/scraper &&
             
-            # Restart supervisor and update configuration
-            sudo systemctl restart supervisor &&
+            # Restart supervisord and update
+            sudo systemctl restart supervisord &&
+            sleep 5 &&  # Give supervisord time to start
             sudo supervisorctl reread &&
             sudo supervisorctl update &&
-            sudo supervisorctl restart realestate_scraper
+            sudo supervisorctl start realestate_scraper
           '
