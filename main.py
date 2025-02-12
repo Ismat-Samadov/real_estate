@@ -47,8 +47,8 @@ scraper_configs = {
     'arenda.az': {
         'class': OptimizedArendaScraper,
         'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 5},  # Day time every 5 min
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 15}  # Night time every 15 min
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 15}  # Every 15 minutes
+
         ],
         'pages': 1
     },
@@ -63,8 +63,7 @@ scraper_configs = {
     'emlak.az': {
         'class': EmlakAzScraper,
         'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(21, 0), 'interval': 10},
-            {'start': datetime.time(21, 0), 'end': datetime.time(9, 0), 'interval': 30}
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 30}  # Every 30 minutes
         ],
         'pages': 1
     },
@@ -78,8 +77,7 @@ scraper_configs = {
     'ev10.az': {
         'class': EV10Scraper,
         'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 720}  # Every 12 hours
         ],
         'pages': 1
     },
@@ -94,8 +92,7 @@ scraper_configs = {
     'yeniemlak.az': {
         'class': YeniEmlakScraper,
         'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+            {'start': datetime.time(0, 0), 'end': datetime.time(19, 59), 'interval': 6}  # Every 6 minutes
         ],
         'pages': 1
     },
@@ -110,8 +107,7 @@ scraper_configs = {
     'vipemlak.az': {
         'class': VipEmlakScraper,
         'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(19, 0), 'interval': 15},
-            {'start': datetime.time(19, 0), 'end': datetime.time(9, 0), 'interval': 30}
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 480}  # Every 8 hours
         ],
         'pages': 1
     }
