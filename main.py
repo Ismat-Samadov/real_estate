@@ -33,6 +33,90 @@ import pytz
 from dataclasses import dataclass
 
 
+scraper_configs = {
+    'bina.az': {
+        'class': OptimizedBinaScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(19, 0), 'interval': 2},  # Peak hours every 2 min
+            {'start': datetime.time(19, 0), 'end': datetime.time(1, 0), 'interval': 5},  # Evening every 5 min
+            {'start': datetime.time(1, 0), 'end': datetime.time(2, 0), 'interval': 5},   # Night every 5 min
+            {'start': datetime.time(2, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Early morning every 30 min
+        ],
+        'pages': 1
+    },
+    'arenda.az': {
+        'class': OptimizedArendaScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 5},  # Day time every 5 min
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 15}  # Night time every 15 min
+        ],
+        'pages': 1
+    },
+    'tap.az': {
+        'class': TapAzScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(22, 0), 'interval': 10},  # Day time every 10 min
+            {'start': datetime.time(22, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Night time every 30 min
+        ],
+        'pages': 1
+    },
+    'emlak.az': {
+        'class': EmlakAzScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(21, 0), 'interval': 10},
+            {'start': datetime.time(21, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'lalafo.az': {
+        'class': LalafoScraper,
+        'active_periods': [
+            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 min all day
+        ],
+        'pages': 1
+    },
+    'ev10.az': {
+        'class': EV10Scraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'unvan.az': {
+        'class': UnvanScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 15},
+            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'yeniemlak.az': {
+        'class': YeniEmlakScraper,
+        'active_periods': [
+            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
+            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
+        ],
+        'pages': 1
+    },
+    'ipoteka.az': {
+        'class': IpotekaScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 20},
+            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 45}
+        ],
+        'pages': 1
+    },
+    'vipemlak.az': {
+        'class': VipEmlakScraper,
+        'active_periods': [
+            {'start': datetime.time(9, 0), 'end': datetime.time(19, 0), 'interval': 15},
+            {'start': datetime.time(19, 0), 'end': datetime.time(9, 0), 'interval': 30}
+        ],
+        'pages': 1
+    }
+    }
+
 @dataclass
 class ScraperConfig:
     name: str
@@ -493,213 +577,141 @@ def get_current_interval(scraper_name: str, active_periods: List[Dict]) -> int:
     
     return active_periods[0]['interval']  # Default to first period interval
 
+
 async def run_scrapers():
     logger = logging.getLogger(__name__)
     start_time = time.time()
     
-    stats = {
+    overall_stats = {
         'success_count': defaultdict(int),
         'error_count': defaultdict(int),
         'error_details': defaultdict(lambda: defaultdict(int)),
         'duration': 0,
-        'avg_time_per_listing': 0
+        'avg_time_per_listing': 0,
+        'website_stats': defaultdict(lambda: {
+            'new': 0,
+            'updated': 0,
+            'failed': 0,
+            'total_processed': 0
+        })
     }
-    
-    scraper_configs = {
-    'bina.az': {
-        'class': OptimizedBinaScraper,
-        'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(19, 0), 'interval': 2},  # Peak hours every 2 min
-            {'start': datetime.time(19, 0), 'end': datetime.time(1, 0), 'interval': 5},  # Evening every 5 min
-            {'start': datetime.time(1, 0), 'end': datetime.time(2, 0), 'interval': 5},   # Night every 5 min
-            {'start': datetime.time(2, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Early morning every 30 min
-        ],
-        'pages': 1
-    },
-    'arenda.az': {
-        'class': OptimizedArendaScraper,
-        'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 5},  # Day time every 5 min
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 15}  # Night time every 15 min
-        ],
-        'pages': 1
-    },
-    'tap.az': {
-        'class': TapAzScraper,
-        'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(22, 0), 'interval': 10},  # Day time every 10 min
-            {'start': datetime.time(22, 0), 'end': datetime.time(8, 0), 'interval': 30}   # Night time every 30 min
-        ],
-        'pages': 1
-    },
-    'emlak.az': {
-        'class': EmlakAzScraper,
-        'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(21, 0), 'interval': 10},
-            {'start': datetime.time(21, 0), 'end': datetime.time(9, 0), 'interval': 30}
-        ],
-        'pages': 1
-    },
-    'lalafo.az': {
-        'class': LalafoScraper,
-        'active_periods': [
-            {'start': datetime.time(0, 0), 'end': datetime.time(23, 59), 'interval': 15}  # Every 15 min all day
-        ],
-        'pages': 1
-    },
-    'ev10.az': {
-        'class': EV10Scraper,
-        'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
-        ],
-        'pages': 1
-    },
-    'unvan.az': {
-        'class': UnvanScraper,
-        'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 15},
-            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 30}
-        ],
-        'pages': 1
-    },
-    'yeniemlak.az': {
-        'class': YeniEmlakScraper,
-        'active_periods': [
-            {'start': datetime.time(8, 0), 'end': datetime.time(20, 0), 'interval': 15},
-            {'start': datetime.time(20, 0), 'end': datetime.time(8, 0), 'interval': 30}
-        ],
-        'pages': 1
-    },
-    'ipoteka.az': {
-        'class': IpotekaScraper,
-        'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(18, 0), 'interval': 20},
-            {'start': datetime.time(18, 0), 'end': datetime.time(9, 0), 'interval': 45}
-        ],
-        'pages': 1
-    },
-    'vipemlak.az': {
-        'class': VipEmlakScraper,
-        'active_periods': [
-            {'start': datetime.time(9, 0), 'end': datetime.time(19, 0), 'interval': 15},
-            {'start': datetime.time(19, 0), 'end': datetime.time(9, 0), 'interval': 30}
-        ],
-        'pages': 1
-    }
-    }
-    
-    all_results = []
-    
+
+    connection = None
     try:
+        # Initialize database connection
+        connection = get_db_connection()
+        logger.info("Database connection established")
+        
+        # Initialize proxy manager
         proxy_manager = ProxyHandler()
         if not await proxy_manager.verify_proxy():
             logger.error("Failed to verify proxy connection")
-            return [], stats
-            
+            return overall_stats
+        
+        reporter = TelegramReporter()
+        
+        # Process one website at a time
         for name, config in scraper_configs.items():
             try:
                 # Get current interval for this scraper
                 interval = get_current_interval(name, config['active_periods'])
                 if interval == 0:  # Skip if outside active period
+                    logger.info(f"Skipping {name} - outside active period")
                     continue
                 
                 scraper_start = time.time()
                 logger.info(f"Starting {name} scraper")
                 
+                # Initialize and run scraper
                 scraper = config['class']()
                 proxy_manager.apply_to_scraper(scraper)
                 results = await scraper.run(pages=config['pages'])
                 
                 if results:
-                    stats['success_count'][name] = len(results)
+                    # Update source_website for all results
                     for result in results:
                         result['source_website'] = name
-                    all_results.extend(results)
+                    
+                    # Save results to database
+                    db_stats = save_listings_to_db(connection, results)
+                    
+                    # Update overall statistics
+                    overall_stats['success_count'][name] = len(results)
+                    overall_stats['website_stats'][name].update(db_stats['website_stats'][name])
+                    
+                    # Calculate and log metrics
+                    scraper_duration = time.time() - scraper_start
+                    avg_time = scraper_duration / len(results) if results else 0
+                    logger.info(f"{name} completed in {scraper_duration:.2f}s (avg {avg_time:.2f}s per listing)")
+                    
+                    # Send individual website report
+                    website_stats = {
+                        'success_count': {name: len(results)},
+                        'error_count': overall_stats['error_count'],
+                        'error_details': overall_stats['error_details'],
+                        'duration': scraper_duration,
+                        'avg_time_per_listing': avg_time
+                    }
+                    website_db_stats = {
+                        'successful_inserts': db_stats['successful_inserts'],
+                        'failed': db_stats['failed'],
+                        'website_stats': {name: db_stats['website_stats'][name]}
+                    }
+                    await reporter.send_report(website_stats, website_db_stats)
                 
-                scraper_duration = time.time() - scraper_start
-                logger.info(f"{name} completed in {scraper_duration:.2f}s")
-                
-                # Wait for the appropriate interval
+                # Wait for the appropriate interval before next website
                 await asyncio.sleep(interval * 60)
                 
             except Exception as e:
-                stats['error_count'][name] += 1
+                overall_stats['error_count'][name] += 1
                 error_type = type(e).__name__
-                stats['error_details'][name][error_type] += 1
+                overall_stats['error_details'][name][error_type] += 1
                 logger.error(f"Error in {name}: {str(e)}", exc_info=True)
             
-            await asyncio.sleep(random.uniform(2, 5))
+            finally:
+                # Add small delay between websites
+                await asyncio.sleep(random.uniform(2, 5))
     
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
-        return [], stats
     
     finally:
+        if connection:
+            connection.close()
+        
+        # Calculate final statistics
         total_duration = time.time() - start_time
-        total_listings = len(all_results)
+        total_listings = sum(overall_stats['success_count'].values())
         
-        stats['duration'] = total_duration
-        stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
+        overall_stats['duration'] = total_duration
+        overall_stats['avg_time_per_listing'] = total_duration / total_listings if total_listings > 0 else 0
         
-        return all_results, stats
-    
+        return overall_stats
 
 async def main():
     """Main async function to run scrapers"""
     logger = setup_logging()
     logger.info("Starting scraper application")
-    connection = None
     
     try:
-        try:
-            connection = get_db_connection()
-            logger.info("Database connection established")
-        except mysql.connector.Error as err:
-            logger.error(f"Database connection failed: {err}")
-            logger.info("Continuing to test scraping")
+        # Run scrapers and get overall statistics
+        overall_stats = await run_scrapers()
         
-        # Get both results and stats from run_scrapers
-        results, scraper_stats = await run_scrapers()
-        logger.info(f"All scrapers completed. Total listings: {len(results)}")
-        
-        # Initialize db_stats with default structure
-        db_stats = {
-            'successful_inserts': 0,
-            'successful_updates': 0,
-            'failed': 0,
-            'error_details': defaultdict(int),
-            'updated_fields': defaultdict(int),
-            'website_stats': defaultdict(lambda: {
-                'new': 0,
-                'updated': 0,
-                'failed': 0,
-                'updated_fields': defaultdict(int)
-            })
-        }
-        
-        if connection and results:
-            # Get database stats from save operation
-            db_stats = save_listings_to_db(connection, results)
-            logger.info("Data saved to database")
-        elif results:
-            logger.info(f"Scraped {len(results)} listings")
-            logger.debug("Sample: %s", results[0])
-        
-        # Send report with both scraper and database stats
+        # Send final summary report
         try:
             reporter = TelegramReporter()
-            await reporter.send_report(scraper_stats, db_stats)
-            logger.info("Telegram report sent successfully")
+            await reporter.send_report(
+                scraper_stats=overall_stats,
+                db_stats={'website_stats': overall_stats['website_stats']}
+            )
+            logger.info("Final summary report sent successfully")
         except Exception as e:
-            logger.error(f"Failed to send Telegram report: {str(e)}", exc_info=True)
+            logger.error(f"Failed to send final summary report: {str(e)}", exc_info=True)
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}", exc_info=True)
         raise
     finally:
-        if connection:
-            connection.close()
         logger.info("Application shutting down")
         
 if __name__ == "__main__":
