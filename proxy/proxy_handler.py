@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 import random
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict
 from dotenv import load_dotenv
 
 class DataImpulseProxyHandler:
@@ -22,9 +22,6 @@ class DataImpulseProxyHandler:
         
         if not self.username or not self.password:
             raise ValueError("DataImpulse credentials not found in environment variables")
-        
-        # Generate session ID for sticky sessions
-        self.session_id = random.randbytes(8).hex()
         
         # Construct proxy URL with authentication
         self.proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}:{self.proxy_port}"
@@ -69,69 +66,11 @@ class DataImpulseProxyHandler:
         headers['User-Agent'] = self._get_random_user_agent()
         return headers
 
-    async def verify_proxy(self) -> bool:
-        """Verify proxy connection and location using multiple methods"""
-        verification_urls = [
-            'http://ip-api.com/json',
-            'https://ipinfo.io/json',
-            'https://api64.ipify.org?format=json'
-        ]
-        
-        session = await self.create_session()
-        try:
-            async with session:
-                # Try each verification URL until one succeeds
-                for url in verification_urls:
-                    try:
-                        async with session.get(
-                            url,
-                            proxy=self.proxy_url,
-                            timeout=30,
-                            verify_ssl=False
-                        ) as response:
-                            if response.status == 200:
-                                try:
-                                    data = await response.json()
-                                    self.logger.info(f"Proxy verification successful at {url}: {data}")
-                                    return True
-                                except Exception as e:
-                                    self.logger.warning(f"Could not parse JSON from {url}: {str(e)}")
-                                    continue
-                    except Exception as e:
-                        self.logger.warning(f"Verification attempt failed for {url}: {str(e)}")
-                        continue
-
-                # If all JSON endpoints fail, try a simple connectivity test
-                test_urls = ['https://google.com', 'https://bina.az', 'https://yeniemlak.az']
-                for url in test_urls:
-                    try:
-                        async with session.get(
-                            url,
-                            proxy=self.proxy_url,
-                            timeout=10,
-                            verify_ssl=False
-                        ) as response:
-                            if response.status == 200:
-                                self.logger.info(f"Basic connectivity test successful with {url}")
-                                return True
-                    except Exception as e:
-                        self.logger.warning(f"Basic connectivity test failed for {url}: {str(e)}")
-                        continue
-
-                self.logger.error("All proxy verification attempts failed")
-                return False
-                
-        except Exception as e:
-            self.logger.error(f"Proxy verification error: {str(e)}")
-            return False
-        finally:
-            await session.close()
-
     async def create_session(self) -> aiohttp.ClientSession:
         """Create an optimized aiohttp session"""
         connector = aiohttp.TCPConnector(
             ssl=False,
-            limit=5,  # Conservative connection limit
+            limit=5,
             ttl_dns_cache=300,
             force_close=True,
             enable_cleanup_closed=True
