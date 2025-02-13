@@ -25,7 +25,10 @@ jobs:
       PROXY_PASSWORD: ${{ secrets.PROXY_PASSWORD }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
+      DATAIMPULSE_USERNAME: ${{ secrets.DATAIMPULSE_USERNAME }}
+      DATAIMPULSE_PASSWORD: ${{ secrets.DATAIMPULSE_PASSWORD }}
+      DATAIMPULSE_HOST: ${{ secrets.DATAIMPULSE_HOST }}
+      DATAIMPULSE_PORT: ${{ secrets.DATAIMPULSE_PORT }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -103,8 +106,10 @@ jobs:
           MAX_RETRIES=${{ secrets.MAX_RETRIES }}
           LOGGING_LEVEL=${{ secrets.LOGGING_LEVEL }}
           SCRAPER_PAGES=${{ secrets.SCRAPER_PAGES }}
-          PROXY_USERNAME=${{ secrets.PROXY_USERNAME }}
-          PROXY_PASSWORD=${{ secrets.PROXY_PASSWORD }}
+          DATAIMPULSE_USERNAME=${{ secrets.DATAIMPULSE_USERNAME }}
+          DATAIMPULSE_PASSWORD=${{ secrets.DATAIMPULSE_PASSWORD }}
+          DATAIMPULSE_HOST=${{ secrets.DATAIMPULSE_HOST }}
+          DATAIMPULSE_PORT=${{ secrets.DATAIMPULSE_PORT }}
           TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}
           EOL

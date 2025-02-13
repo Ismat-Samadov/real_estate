@@ -15,7 +15,8 @@ from scrapers.vipemlak import VipEmlakScraper
 from scrapers.lalafo import LalafoScraper
 from scrapers.tap import TapAzScraper
 # from bright_data_proxy import BrightDataProxy
-from proxy_handler import ProxyHandler # 711_proxy
+# from proxy_handler import ProxyHandler # 711_proxy
+from proxy_handler import DataImpulseProxyHandler  # dataimpulse_proxy  
 import mysql.connector
 from mysql.connector import Error
 import datetime
@@ -570,7 +571,7 @@ def get_current_interval(scraper_name: str, active_periods: List[Dict]) -> int:
     
     return active_periods[0]['interval']  # Default to first period interval
 
-async def run_single_scraper(name: str, config: dict, proxy_manager: ProxyHandler, connection, reporter: TelegramReporter, overall_stats: dict):
+async def run_single_scraper(name: str, config: dict, proxy_manager: DataImpulseProxyHandler, connection, reporter: TelegramReporter, overall_stats: dict):
     """Run a single scraper continuously with its configured interval"""
     logger = logging.getLogger(__name__)
     
@@ -656,11 +657,10 @@ async def run_scrapers():
         logger.info("Database connection established")
         
         # Initialize proxy manager
-        proxy_manager = ProxyHandler()
+        proxy_manager = DataImpulseProxyHandler()
         if not await proxy_manager.verify_proxy():
             logger.error("Failed to verify proxy connection")
             return overall_stats
-        
         reporter = TelegramReporter()
         
         # Create tasks for each scraper
