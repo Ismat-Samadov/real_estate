@@ -35,22 +35,26 @@ class TelegramReporter:
             # Per-Website Statistics
             total_scraped = 0
             total_inserted = 0
+            total_updated = 0
             total_failed = 0
 
             for website in sorted(scraper_stats['success_count'].keys()):
                 scraped = scraper_stats['success_count'][website]
                 website_stats = db_stats['website_stats'].get(website, {})
                 inserted = website_stats.get('new', 0)
+                updated = website_stats.get('updated', 0)
                 failed = website_stats.get('failed', 0)
                 processed = website_stats.get('total_processed', scraped)
                 
                 total_scraped += scraped
                 total_inserted += inserted
+                total_updated += updated
                 total_failed += failed
                 
                 report += f"🌐 <b>{website}</b>\n"
                 report += f"├─ Listings Found: {processed:,}\n"
-                report += f"├─ Successfully Inserted: {inserted:,}\n"
+                report += f"├─ New Listings: {inserted:,}\n"
+                report += f"├─ Updated Listings: {updated:,}\n"
                 if failed > 0:
                     report += f"├─ Failed: {failed:,}\n"
                 
@@ -67,10 +71,10 @@ class TelegramReporter:
                         for error_type, count in errors.items():
                             report += f"│  ├─ {error_type}: {count:,}\n"
                 
-                # Success rate calculation
+                # Success rate calculation (considering both inserts and updates as successes)
                 report += "└─ Success Rate: "
                 if processed > 0:
-                    success_rate = (inserted / processed) * 100
+                    success_rate = ((inserted + updated) / processed) * 100
                     report += f"{success_rate:.1f}%"
                 else:
                     report += "N/A"
@@ -79,13 +83,14 @@ class TelegramReporter:
             # Overall Summary
             report += "📊 <b>Final Summary</b>\n"
             report += f"├─ Total Listings Found: {total_scraped:,}\n"
-            report += f"├─ Successfully Inserted: {total_inserted:,}\n"
+            report += f"├─ New Listings: {total_inserted:,}\n"
+            report += f"├─ Updated Listings: {total_updated:,}\n"
             if total_failed > 0:
-                report += f"├─ Failed Insertions: {total_failed:,}\n"
+                report += f"├─ Failed Operations: {total_failed:,}\n"
             
-            # Overall success rate
+            # Overall success rate (including both inserts and updates)
             if total_scraped > 0:
-                overall_success_rate = (total_inserted / total_scraped) * 100
+                overall_success_rate = ((total_inserted + total_updated) / total_scraped) * 100
                 report += f"└─ Overall Success Rate: {overall_success_rate:.1f}%"
 
             await self.bot.send_message(
