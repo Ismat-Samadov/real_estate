@@ -140,7 +140,7 @@ jobs:
             --exclude='.github' \
             --exclude='*.pyc' \
             --exclude='__pycache__' \
-            main.py utils.py proxy/proxy_handler.py \
+            main.py proxy/proxy_handler.py \
             telegram_reporter.py requirements.txt .env \
             realestate_scraper.ini scrapers/
 
