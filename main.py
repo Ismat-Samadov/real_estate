@@ -450,14 +450,16 @@ def validate_listing_data(listing: Dict) -> Dict:
     return validated
 
 def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
-    """Save listings to database - simple insert mode"""
+    """Save listings to database with duplicate URL handling"""
     logger = logging.getLogger(__name__)
     stats = {
         'successful_inserts': 0,
+        'successful_updates': 0,
         'failed': 0,
         'error_details': defaultdict(int),
         'website_stats': defaultdict(lambda: {
             'new': 0,
+            'updated': 0,
             'failed': 0,
             'total_processed': 0
         })
@@ -467,7 +469,15 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
         connection = ensure_connection(connection)
         cursor = connection.cursor(prepared=True)
         
-        # Simple insert query without any duplicate handling
+        # First, check if the source_url exists
+        check_existing_query = """
+            SELECT id, created_at, source_url 
+            FROM properties 
+            WHERE source_url = %s
+            LIMIT 1
+        """
+        
+        # For new records
         insert_query = """
             INSERT INTO properties (
                 listing_id, title, description, metro_station, district,
@@ -479,14 +489,47 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 listing_date
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
+        """
+        
+        # For updating existing records - explicitly NOT updating created_at
+        update_query = """
+            UPDATE properties SET
+                listing_id = %s,
+                title = %s,
+                description = %s,
+                metro_station = %s,
+                district = %s,
+                address = %s,
+                location = %s,
+                latitude = %s,
+                longitude = %s,
+                rooms = %s,
+                area = %s,
+                floor = %s,
+                total_floors = %s,
+                property_type = %s,
+                listing_type = %s,
+                price = %s,
+                currency = %s,
+                contact_type = %s,
+                contact_phone = %s,
+                whatsapp_available = %s,
+                views_count = %s,
+                has_repair = %s,
+                amenities = %s,
+                photos = %s,
+                source_website = %s,
+                updated_at = %s,
+                listing_date = %s
+            WHERE source_url = %s
         """
         
         for listing in listings:
             try:
                 sanitized = validate_listing_data(listing)
-                if not sanitized or not sanitized.get('listing_id') or not sanitized.get('source_website'):
+                if not sanitized or not sanitized.get('source_url'):
                     stats['failed'] += 1
                     stats['error_details']['invalid_data'] += 1
                     continue
@@ -494,43 +537,98 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 website = sanitized['source_website']
                 stats['website_stats'][website]['total_processed'] += 1
                 
-                values = (
-                    sanitized.get('listing_id'),
-                    sanitized.get('title'),
-                    sanitized.get('description'),
-                    sanitized.get('metro_station'),
-                    sanitized.get('district'),
-                    sanitized.get('address'),
-                    sanitized.get('location'),
-                    sanitized.get('latitude'),
-                    sanitized.get('longitude'),
-                    sanitized.get('rooms'),
-                    sanitized.get('area'),
-                    sanitized.get('floor'),
-                    sanitized.get('total_floors'),
-                    sanitized.get('property_type'),
-                    sanitized.get('listing_type'),
-                    sanitized.get('price'),
-                    sanitized.get('currency'),
-                    sanitized.get('contact_type'),
-                    sanitized.get('contact_phone'),
-                    sanitized.get('whatsapp_available', False),
-                    sanitized.get('views_count', 0),
-                    sanitized.get('has_repair', False),
-                    sanitized.get('amenities'),
-                    sanitized.get('photos'),
-                    sanitized.get('source_url'),
-                    website,
-                    sanitized.get('created_at', datetime.datetime.now()),
-                    sanitized.get('listing_date')
-                )
+                # Check if source_url exists
+                cursor.execute(check_existing_query, (sanitized['source_url'],))
+                existing_record = cursor.fetchone()
                 
-                cursor.execute(insert_query, values)
-                stats['successful_inserts'] += 1
-                stats['website_stats'][website]['new'] += 1
+                current_time = datetime.datetime.now()
+                
+                if existing_record:
+                    # Log that we're updating an existing record
+                    logger.info(
+                        f"Updating existing record for source_url: {sanitized['source_url']}, "
+                        f"original created_at will be preserved: {existing_record[1]}"
+                    )
+                    
+                    # Prepare update values (note: created_at is NOT included)
+                    update_values = (
+                        sanitized.get('listing_id'),
+                        sanitized.get('title'),
+                        sanitized.get('description'),
+                        sanitized.get('metro_station'),
+                        sanitized.get('district'),
+                        sanitized.get('address'),
+                        sanitized.get('location'),
+                        sanitized.get('latitude'),
+                        sanitized.get('longitude'),
+                        sanitized.get('rooms'),
+                        sanitized.get('area'),
+                        sanitized.get('floor'),
+                        sanitized.get('total_floors'),
+                        sanitized.get('property_type'),
+                        sanitized.get('listing_type'),
+                        sanitized.get('price'),
+                        sanitized.get('currency'),
+                        sanitized.get('contact_type'),
+                        sanitized.get('contact_phone'),
+                        sanitized.get('whatsapp_available', False),
+                        sanitized.get('views_count', 0),
+                        sanitized.get('has_repair', False),
+                        sanitized.get('amenities'),
+                        sanitized.get('photos'),
+                        website,
+                        current_time,  # updated_at
+                        sanitized.get('listing_date'),
+                        sanitized['source_url']  # WHERE clause
+                    )
+                    
+                    cursor.execute(update_query, update_values)
+                    stats['successful_updates'] += 1
+                    stats['website_stats'][website]['updated'] += 1
+                    
+                else:
+                    # Log that we're inserting a new record
+                    logger.info(f"Inserting new record for source_url: {sanitized['source_url']}")
+                    
+                    # For new records, set both created_at and updated_at
+                    insert_values = (
+                        sanitized.get('listing_id'),
+                        sanitized.get('title'),
+                        sanitized.get('description'),
+                        sanitized.get('metro_station'),
+                        sanitized.get('district'),
+                        sanitized.get('address'),
+                        sanitized.get('location'),
+                        sanitized.get('latitude'),
+                        sanitized.get('longitude'),
+                        sanitized.get('rooms'),
+                        sanitized.get('area'),
+                        sanitized.get('floor'),
+                        sanitized.get('total_floors'),
+                        sanitized.get('property_type'),
+                        sanitized.get('listing_type'),
+                        sanitized.get('price'),
+                        sanitized.get('currency'),
+                        sanitized.get('contact_type'),
+                        sanitized.get('contact_phone'),
+                        sanitized.get('whatsapp_available', False),
+                        sanitized.get('views_count', 0),
+                        sanitized.get('has_repair', False),
+                        sanitized.get('amenities'),
+                        sanitized.get('photos'),
+                        sanitized.get('source_url'),
+                        website,
+                        current_time,  # created_at
+                        current_time,  # updated_at
+                        sanitized.get('listing_date')
+                    )
+                    
+                    cursor.execute(insert_query, insert_values)
+                    stats['successful_inserts'] += 1
+                    stats['website_stats'][website]['new'] += 1
                 
                 # Commit every 50 records
-                if stats['successful_inserts'] % 50 == 0:
+                if (stats['successful_inserts'] + stats['successful_updates']) % 50 == 0:
                     connection.commit()
                     
             except Exception as e:
@@ -538,7 +636,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
                 error_type = type(e).__name__
                 stats['error_details'][error_type] += 1
                 stats['website_stats'][website]['failed'] += 1
-                logger.error(f"Error saving listing {listing.get('listing_id')}: {str(e)}")
+                logger.error(f"Error saving listing {sanitized.get('source_url')}: {str(e)}")
                 continue
         
         # Final commit
@@ -550,7 +648,7 @@ def save_listings_to_db(connection, listings: List[Dict]) -> Dict:
     except Exception as e:
         logger.error(f"Database error: {str(e)}")
         raise
-
+ 
 def get_current_interval(scraper_name: str, active_periods: List[Dict]) -> int:
     """Get the current interval based on time of day"""
     timezone = pytz.timezone('Asia/Baku')
