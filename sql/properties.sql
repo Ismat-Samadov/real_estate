@@ -66,15 +66,15 @@ CREATE TABLE properties (
 -- Drop existing unique constraint if it exists
 ALTER TABLE properties 
 DROP INDEX IF EXISTS unique_source_url;
-
--- Add new composite unique constraint
-ALTER TABLE properties
-ADD CONSTRAINT unique_listing_composite 
-UNIQUE (district, price, source_url);
-
 -- Update source_url column definition to be NOT NULL
 ALTER TABLE properties 
 MODIFY source_url VARCHAR(255) NOT NULL;
+
+ALTER TABLE properties 
+MODIFY COLUMN source_url VARCHAR(255) NOT NULL,
+ADD UNIQUE INDEX idx_source_url (source_url);
+
+
 
 -- Add checksum column to existing properties table
 ALTER TABLE properties
