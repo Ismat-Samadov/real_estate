@@ -220,15 +220,33 @@ class EmlakAzScraper:
                 title_text = title_elem.text.strip()
                 data['title'] = title_text
                 
-                # Extract metro station from title (pattern: "Something m.")
-                metro_match = re.search(r'(\w+)\s+m\.', title_text)
-                if metro_match:
-                    data['metro_station'] = metro_match.group(1).strip()
+                # Enhanced metro station pattern matching
+                metro_patterns = [
+                    r'(\w+)\s+m\.',            # "Nizami m."
+                    r'(\w+)\s+metro',          # "Nizami metro"
+                    r'(\w+)\s+m/st',           # "Nizami m/st"
+                    r'(\w+)\s+metrosu'         # "Nizami metrosu"
+                ]
                 
-                # Extract district from title (pattern: "Something r.")
-                district_match = re.search(r'(\w+)\s+r\.', title_text)
-                if district_match:
-                    data['district'] = district_match.group(1).strip()
+                for pattern in metro_patterns:
+                    metro_match = re.search(pattern, title_text, re.IGNORECASE)
+                    if metro_match:
+                        data['metro_station'] = metro_match.group(1).strip()
+                        break
+                
+                # Enhanced district pattern matching
+                district_patterns = [
+                    r'(\w+)\s+r\.',           # "Yasamal r."
+                    r'(\w+)\s+ray\.',         # "Yasamal ray."
+                    r'(\w+)\s+rayonu',        # "Yasamal rayonu"
+                    r'(\w+)\s+rayon'          # "Yasamal rayon"
+                ]
+                
+                for pattern in district_patterns:
+                    district_match = re.search(pattern, title_text, re.IGNORECASE)
+                    if district_match:
+                        data['district'] = district_match.group(1).strip()
+                        break
 
             # Extract price information
             price_div = soup.select_one('div.price')
@@ -275,20 +293,36 @@ class EmlakAzScraper:
                             elif any(marker in part for marker in ['metro', 'm.']):
                                 data['metro_station'] = part.split('metro')[0].strip() if 'metro' in part else part
 
-            # Extract coordinates
+            # Extract coordinates with better validation
             map_elem = soup.select_one('#google_map')
             if map_elem:
                 coords_value = map_elem.get('value', '')
-                coords_match = re.search(r'\(([\d.]+),\s*([\d.]+)\)', coords_value)
-                if coords_match:
-                    try:
-                        lat = float(coords_match.group(1))
-                        lon = float(coords_match.group(2))
-                        if -90 <= lat <= 90 and -180 <= lon <= 180:
-                            data['latitude'] = round(lat, 8)
-                            data['longitude'] = round(lon, 8)
-                    except (ValueError, TypeError):
-                        pass
+                
+                # Handle different coordinate formats
+                coord_patterns = [
+                    r'\(([\d.]+),\s*([\d.]+)\)',           # (40.123, 49.123)
+                    r'([\d.]+)\s*,\s*([\d.]+)',            # 40.123, 49.123
+                    r'latitude=([\d.]+).*longitude=([\d.]+)'# latitude=40.123,longitude=49.123
+                ]
+                
+                for pattern in coord_patterns:
+                    coords_match = re.search(pattern, coords_value)
+                    if coords_match:
+                        try:
+                            lat = float(coords_match.group(1))
+                            lon = float(coords_match.group(2))
+                            
+                            # Validate coordinates are in Azerbaijan
+                            if (38.5 <= lat <= 42.0 and  # Azerbaijan latitude range
+                                44.5 <= lon <= 51.0):    # Azerbaijan longitude range
+                                data['latitude'] = round(lat, 8)
+                                data['longitude'] = round(lon, 8)
+                                break
+                            else:
+                                self.logger.warning(f"Coordinates outside Azerbaijan range: {lat}, {lon}")
+                        except (ValueError, TypeError) as e:
+                            self.logger.error(f"Error parsing coordinates from {coords_value}: {str(e)}")
+                            continue
 
             # Extract views count
             views_elem = soup.select_one('.views-count strong')
