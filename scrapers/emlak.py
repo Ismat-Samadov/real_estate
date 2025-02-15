@@ -253,8 +253,27 @@ class EmlakAzScraper:
             # Extract address and coordinates
             address_elem = soup.select_one('.map-address h4')
             if address_elem:
+                # Remove 'Ünvan:' and clean up the text
                 address_text = address_elem.text.replace('Ünvan:', '').strip()
-                data['address'] = address_text
+                if address_text:
+                    # Store the full address
+                    data['address'] = address_text
+                    
+                    # Try to extract more specific location information
+                    address_parts = [part.strip() for part in address_text.split(',')]
+                    
+                    # If we have multiple parts, try to determine district/location
+                    if len(address_parts) > 1:
+                        # Usually first part is the street name
+                        data['street'] = address_parts[0]
+                        
+                        # Look for district markers in other parts
+                        for part in address_parts[1:]:
+                            part = part.strip().lower()
+                            if any(marker in part for marker in ['rayonu', 'район', 'r.']):
+                                data['district'] = part.split('rayonu')[0].strip() if 'rayonu' in part else part
+                            elif any(marker in part for marker in ['metro', 'm.']):
+                                data['metro_station'] = part.split('metro')[0].strip() if 'metro' in part else part
 
             # Extract coordinates
             map_elem = soup.select_one('#google_map')
