@@ -86,7 +86,6 @@ class IpotekaScraper:
         listings = []
         soup = BeautifulSoup(html, 'lxml')
         
-        # Updated selector for listing items
         for listing in soup.select('.place_list .col-xs-6 .item'):
             try:
                 # Get listing URL and ID
@@ -99,38 +98,52 @@ class IpotekaScraper:
 
                 # Extract price
                 price_elem = listing.select_one('span.price')
-                price = self.extract_number(price_elem.text) if price_elem else None
+                price_text = price_elem.text.strip() if price_elem else None
+                price = self.extract_number(price_text) if price_text else None
                 
-                # Get title and description
+                # Get address from title (new)
                 title = listing.select_one('span.title')
-                title_text = title.text.strip() if title else None
+                address = title.text.strip() if title else None
                 
                 # Get area and rooms from description
-                desc = listing.select_one('span.desc')
                 area = None
                 rooms = None
-                if desc:
+                listing_date = None
+                location = None
+                
+                desc_spans = listing.select('span.desc')
+                for desc in desc_spans:
                     desc_text = desc.text.strip().lower()
+                    
+                    # Extract area
                     if 'sahəsi:' in desc_text:
                         area_match = re.search(r'sahəsi:\s*([\d.]+)', desc_text)
                         if area_match:
                             area = float(area_match.group(1))
+                            
+                    # Extract rooms
                     if 'otaq sayı:' in desc_text:
                         rooms_match = re.search(r'otaq sayı:\s*(\d+)', desc_text)
                         if rooms_match:
                             rooms = int(rooms_match.group(1))
+                            
+                    # Extract date and location (new)
+                    date_location_match = re.search(r'bakı,\s*(.+?)$', desc_text)
+                    if date_location_match:
+                        listing_date = date_location_match.group(1).strip()
                 
                 # Basic listing data
                 listing_data = {
                     'listing_id': listing_id,
                     'source_url': listing_url,
                     'source_website': 'ipoteka.az',
-                    'title': title_text,
+                    'address': address,  # New field
                     'price': price,
                     'currency': 'AZN',
                     'created_at': datetime.datetime.now(),
                     'area': area,
-                    'rooms': rooms
+                    'rooms': rooms,
+                    'listing_date': listing_date  # New field
                 }
                 
                 listings.append(listing_data)
@@ -142,7 +155,7 @@ class IpotekaScraper:
         return listings
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page"""
+        """Parse the detailed listing page with enhanced field extraction"""
         soup = BeautifulSoup(html, 'lxml')
         
         try:
@@ -152,14 +165,29 @@ class IpotekaScraper:
                 'updated_at': datetime.datetime.now()
             }
             
-            # Extract title and description
+            # Extract title/address and description
             title = soup.select_one('h2.title') or soup.select_one('div.desc_block .title')
             if title:
-                data['title'] = title.text.strip()
+                data['address'] = title.text.strip()
                 
             desc = soup.select_one('.desc_block .text')
             if desc:
-                data['description'] = desc.text.strip()
+                desc_text = desc.text.strip()
+                data['description'] = desc_text
+                
+                # Extract district and metro from description
+                for line in desc_text.split(','):
+                    line = line.strip().lower()
+                    
+                    # Extract district (r. pattern)
+                    district_match = re.search(r'(\w+)\s*r\.', line)
+                    if district_match:
+                        data['district'] = district_match.group(1).title()
+                    
+                    # Extract metro station (m. pattern)
+                    metro_match = re.search(r'(\w+)\s*m\.', line)
+                    if metro_match:
+                        data['metro_station'] = metro_match.group(1).title()
             
             # Extract price
             price_elem = soup.select_one('.desc_block span.price')
@@ -206,20 +234,26 @@ class IpotekaScraper:
                 elif 'sənədin tipi' in label_text:
                     data['document_type'] = value_text
             
+            # Extract listing date (new)
+            date_elem = soup.select_one(':-soup-contains("Yeniləndi:")')
+            if date_elem:
+                date_match = re.search(r'Yeniləndi:\s*(\d{2}\.\d{2}\.\d{4})', date_elem.text)
+                if date_match:
+                    try:
+                        data['listing_date'] = datetime.datetime.strptime(date_match.group(1), '%d.%m.%Y').date()
+                    except ValueError:
+                        pass
+            
             # Extract contact info
             contact_elem = soup.select_one('.contact .user')
             if contact_elem:
                 data['contact_type'] = 'owner'
                 data['contact_name'] = contact_elem.text.strip()
             
-            # Updated phone number extraction
+            # Phone number extraction
             phone_div = soup.select_one('.links .active')
             if phone_div:
-                # Try to get from number attribute first
-                phone = phone_div.get('number')
-                if not phone:
-                    # Fallback to text content
-                    phone = phone_div.text.strip()
+                phone = phone_div.get('number') or phone_div.text.strip()
                 if phone:
                     data['contact_phone'] = phone
                     
@@ -235,23 +269,19 @@ class IpotekaScraper:
                 data['photos'] = json.dumps(photos)
             
             # Determine listing type from description/title
-            if data.get('title') or data.get('description'):
-                text = (data.get('title', '') + ' ' + data.get('description', '')).lower()
-                if 'günlük' in text:
-                    data['listing_type'] = 'daily'
-                elif 'aylıq' in text or 'kirayə' in text:
-                    data['listing_type'] = 'monthly'
-                else:
-                    data['listing_type'] = 'sale'
+            text = ' '.join(filter(None, [data.get('title', ''), data.get('description', '')])).lower()
+            if 'günlük' in text:
+                data['listing_type'] = 'daily'
+            elif 'aylıq' in text or 'kirayə' in text:
+                data['listing_type'] = 'monthly'
+            else:
+                data['listing_type'] = 'sale'
             
             return data
             
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-    
-    
-
 
     async def run(self, pages: int = 2):
         """Run the scraper for specified number of pages"""
