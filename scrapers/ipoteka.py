@@ -228,6 +228,7 @@ class IpotekaScraper:
                 
         return listings
 
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse the detailed listing page"""
         soup = BeautifulSoup(html, 'lxml')
