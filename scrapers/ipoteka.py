@@ -146,18 +146,29 @@ class IpotekaScraper:
                         if 'Bu gün' in date_text:
                             listing_date = datetime.datetime.now().date()
                     
-                    # Extract property type, district, and metro station
-                    if any(x in desc_text for x in ['Otaq', 'tikili', 'Evlər']):
-                        parts = [p.strip() for p in desc_text.split(',')]
-                        for part in parts:
-                            part = part.strip().lower()
-                            # Property type
-                            if 'yeni tikili' in part:
-                                property_type = 'new'
-                            elif 'köhnə tikili' in part:
-                                property_type = 'old'
-                            elif any(x in part for x in ['ev', 'villa']):
-                                property_type = 'house'
+                    # Extract property type, district, metro and location
+                    parts = [p.strip() for p in desc_text.split(',')]
+                    for part in parts:
+                        part = part.strip()
+                        part_lower = part.lower()
+                        
+                        # Property type
+                        if 'yeni tikili' in part_lower:
+                            property_type = 'new'
+                        elif 'köhnə tikili' in part_lower:
+                            property_type = 'old'
+                        elif any(x in part_lower for x in ['ev', 'villa', 'torpaq']):
+                            property_type = 'house' if any(x in part_lower for x in ['ev', 'villa']) else 'land'
+                        
+                        # District and location
+                        if 'r.' in part:
+                            district_match = re.search(r'(\w+)\s*r\.', part)
+                            if district_match:
+                                district = district_match.group(1).title()
+                                # Get location after district if exists
+                                location_match = re.search(r'r\.,\s*([^,]+)', part)
+                                if location_match:
+                                    location = location_match.group(1).strip()
                             
                             # District
                             district_match = re.search(r'(\w+)\s*r\.', part)
@@ -168,6 +179,26 @@ class IpotekaScraper:
                             metro_match = re.search(r'(\w+)\s*m\.', part)
                             if metro_match:
                                 metro_station = metro_match.group(1).title()
+                
+                # Compose title
+                title_components = []
+                if rooms:
+                    title_components.append(f"{rooms} Otaq")
+                if property_type:
+                    type_text = {
+                        'new': 'Yeni tikili',
+                        'old': 'Köhnə tikili',
+                        'house': 'Evlər/Villalar',
+                        'land': 'Torpaq'
+                    }.get(property_type)
+                    if type_text:
+                        title_components.append(type_text)
+                if district:
+                    title_components.append(f"{district} r.")
+                if location:
+                    title_components.append(f"{location.strip()}")
+                
+                title = ", ".join(title_components)
                 
                 # Basic listing data
                 listing_data = {
@@ -185,7 +216,8 @@ class IpotekaScraper:
                     'location': location,
                     'has_document': has_document,
                     'listing_date': listing_date,
-                    'created_at': datetime.datetime.now()
+                    'created_at': datetime.datetime.now(),
+                    'updated_at': datetime.datetime.now()
                 }
                 
                 listings.append(listing_data)
@@ -207,11 +239,157 @@ class IpotekaScraper:
                 'updated_at': datetime.datetime.now()
             }
             
-            # Extract title and description
+            # Extract title and parse its components
             title = soup.select_one('h2.title')
             if title:
                 title_text = title.text.strip()
                 data['title'] = title_text
+                
+                # Parse components from title
+                parts = [p.strip() for p in title_text.split(',')]
+                for part in parts:
+                    part = part.strip()
+                    part_lower = part.lower()
+                    
+                    # Extract rooms
+                    if 'otaq' in part_lower:
+                        rooms_match = re.search(r'(\d+)\s*otaq', part_lower)
+                        if rooms_match:
+                            data['rooms'] = int(rooms_match.group(1))
+                    
+                    # Extract property type
+                    if 'yeni tikili' in part_lower:
+                        data['property_type'] = 'new'
+                    elif 'köhnə tikili' in part_lower:
+                        data['property_type'] = 'old'
+                    elif any(x in part_lower for x in ['ev', 'villa']):
+                        data['property_type'] = 'house'
+                    
+                    # Extract district
+                    if 'r.' in part:
+                        district_match = re.search(r'(\w+)\s*r\.', part)
+                        if district_match:
+                            data['district'] = district_match.group(1).title()
+                    
+                    # Extract area
+                    area_match = re.search(r'(\d+(?:\.\d+)?)\s*m²', part)
+                    if area_match:
+                        data['area'] = float(area_match.group(1))
+            
+            # Extract description
+            desc_elem = soup.select_one('.desc_block .text')
+            if desc_elem:
+                data['description'] = desc_elem.text.strip()
+                
+                # Try to extract metro from description
+                metro_match = re.search(r'(\w+)\s*metro', data['description'].lower())
+                if metro_match:
+                    data['metro_station'] = metro_match.group(1).title()
+            
+            # Extract price
+            price_elem = soup.select_one('.desc_block span.price')
+            if price_elem:
+                data['price'] = self.extract_number(price_elem.text)
+                data['currency'] = 'AZN'
+            
+            # Extract coordinates from map
+            map_elem = soup.select_one('#map')
+            if map_elem:
+                try:
+                    data['latitude'] = float(map_elem.get('data-lat', 0))
+                    data['longitude'] = float(map_elem.get('data-lng', 0))
+                except (ValueError, TypeError):
+                    pass
+            
+            # Extract contact info
+            contact_name = soup.select_one('.contact .user')
+            if contact_name:
+                data['contact_name'] = contact_name.text.strip()
+                data['contact_type'] = 'owner'  # Default to owner unless specified as agent
+            
+            # Extract phone number
+            phone_elem = soup.select_one('.links .active')
+            if phone_elem:
+                phone = phone_elem.get('number') or phone_elem.text.strip()
+                if phone:
+                    data['contact_phone'] = phone.strip()
+            
+            # Extract listing date and views from stats
+            stats = soup.select('.stats .rw')
+            for stat in stats:
+                divs = stat.select('div')
+                if len(divs) == 2:
+                    label = divs[0].text.strip().lower()
+                    value = divs[1].text.strip()
+                    
+                    if 'yeniləndi' in label:
+                        try:
+                            data['listing_date'] = datetime.datetime.strptime(value, '%d.%m.%Y').date()
+                        except ValueError:
+                            pass
+                    elif 'baxış' in label:
+                        try:
+                            data['views_count'] = int(value)
+                        except ValueError:
+                            pass
+            
+            # Extract property details from params block
+            params = soup.select('.params_block .params .rw')
+            for param in params:
+                divs = param.select('div')
+                if len(divs) != 2:
+                    continue
+                    
+                label = divs[0].text.strip().lower()
+                value = divs[1].text.strip()
+                
+                # Process each parameter type
+                if 'sahə' in label:
+                    area = self.extract_number(value)
+                    if area:
+                        data['area'] = area
+                elif 'mərtəbə' in label:
+                    try:
+                        floors = value.split('/')
+                        if len(floors) == 2:
+                            data['total_floors'] = int(floors[0])
+                            data['floor'] = int(floors[1])
+                    except:
+                        pass
+                elif 'otaq sayı' in label:
+                    rooms = self.extract_number(value)
+                    if rooms:
+                        data['rooms'] = int(rooms)
+                elif 'təmir' in label:
+                    data['has_repair'] = 'əla' in value.lower() or 'təmirli' in value.lower()
+                elif 'sənədin tipi' in label:
+                    data['has_document'] = 'çıxarış' in value.lower() or 'kupça' in value.lower()
+            
+            # Extract photos with deduplication
+            photos = set()
+            for photo_elem in soup.select('a[data-fancybox="gallery_ads_view"]'):
+                href = photo_elem.get('href')
+                if href and not href.endswith('load.gif'):
+                    photos.add(self.BASE_URL + href)
+            
+            if photos:
+                data['photos'] = json.dumps(list(photos))
+            
+            # Determine listing type from description and title
+            text = ' '.join(filter(None, [data.get('title', ''), data.get('description', '')]))
+            if 'kirayə' in text.lower() or 'icarə' in text.lower():
+                if 'günlük' in text.lower():
+                    data['listing_type'] = 'daily'
+                else:
+                    data['listing_type'] = 'monthly'
+            else:
+                data['listing_type'] = 'sale'
+            
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
+            raise
                 
                 # Extract from title: property type, district, metro, rooms
                 parts = [p.strip() for p in title_text.split(',')]
