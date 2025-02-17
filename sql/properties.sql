@@ -74,8 +74,6 @@ ALTER TABLE properties
 MODIFY COLUMN source_url VARCHAR(255) NOT NULL,
 ADD UNIQUE INDEX idx_source_url (source_url);
 
-
-
 -- Add checksum column to existing properties table
 ALTER TABLE properties
 ADD COLUMN checksum VARCHAR(64) AFTER source_website;
