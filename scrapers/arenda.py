@@ -228,46 +228,169 @@ class OptimizedArendaScraper:
             error_msg = f"Max retries ({max_retries}) exceeded after {time.time() - start_time:.2f}s. Last error: {last_error}"
             self.logger.error(error_msg)
             raise Exception(error_msg)
-        
+
     async def parse_listing_page(self, html: str) -> List[Dict]:
-        """Parse the listings page and extract basic listing information"""
+        """Parse the listings page and extract detailed listing information"""
         listings = []
         soup = BeautifulSoup(html, 'lxml')
         
         for listing in soup.select('li.new_elan_box'):
             try:
                 # Get listing URL and ID
-                listing_url = listing.select_one('a')['href']
                 listing_id = listing.get('id', '').replace('elan_', '')
-                
-                if not listing_id or not listing_url:
+                link = listing.select_one('a')
+                if not link or not listing_id:
                     continue
+                    
+                listing_url = link['href']
                 
-                # Determine listing type from URL
-                listing_type = 'sale'  # default
-                url_lower = listing_url.lower()
-                if 'kiraye-gunluk' in url_lower:
-                    listing_type = 'daily'
-                elif 'kiraye-ayliq' in url_lower:
-                    listing_type = 'monthly'
-                elif 'satilir' in url_lower:
-                    listing_type = 'sale'
-                
-                # Extract price
-                price_elem = listing.select_one('.elan_price')
-                price_text = price_elem.text.strip() if price_elem else None
-                price = self.extract_price(price_text) if price_text else None
-                
-                # Basic data from listing card
+                # Extract basic listing data
                 listing_data = {
                     'listing_id': listing_id,
                     'source_url': listing_url,
                     'source_website': 'arenda.az',
-                    'price': price,
-                    'currency': 'AZN',
-                    'listing_type': listing_type,  # Set the listing type here
                     'created_at': datetime.datetime.now()
                 }
+                
+                # Extract price
+                price_elem = listing.select_one('.elan_price')
+                if price_elem:
+                    price_text = price_elem.text.strip()
+                    try:
+                        price = float(re.sub(r'[^\d.]', '', price_text))
+                        listing_data.update({
+                            'price': price,
+                            'currency': 'AZN'
+                        })
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Extract listing title and type
+                title_elem = listing.select_one('.elan_property_title1')
+                if title_elem:
+                    title_text = title_elem.text.strip()
+                    listing_data['title'] = title_text
+                    
+                    # Determine listing type
+                    title_lower = title_text.lower()
+                    if 'günlük' in title_lower:
+                        listing_data['listing_type'] = 'daily'
+                    elif 'aylıq' in title_lower:
+                        listing_data['listing_type'] = 'monthly'
+                    else:
+                        listing_data['listing_type'] = 'sale'
+                    
+                    # Determine property type
+                    if 'yeni tikili' in title_lower:
+                        listing_data['property_type'] = 'new'
+                    elif 'köhnə tikili' in title_lower:
+                        listing_data['property_type'] = 'old'
+                    elif 'həyət evi' in title_lower:
+                        listing_data['property_type'] = 'house'
+                    elif 'villa' in title_lower:
+                        listing_data['property_type'] = 'villa'
+                    else:
+                        listing_data['property_type'] = 'apartment'
+                
+                # Extract location information
+                location_elem = listing.select_one('.elan_unvan')
+                if location_elem:
+                    location_text = location_elem.text.strip()
+                    listing_data['location'] = location_text
+                    
+                    # Extract district using various patterns
+                    district_patterns = [
+                        r'(\w+)\s*r\.',        # matches "Yasamal r."
+                        r'(\w+)\s*ray\.',      # matches "Yasamal ray."
+                        r'(\w+)\s*rayonu',     # matches "Yasamal rayonu"
+                        r'(\w+)\s*rayon'       # matches "Yasamal rayon"
+                    ]
+                    
+                    for pattern in district_patterns:
+                        district_match = re.search(pattern, location_text)
+                        if district_match:
+                            listing_data['district'] = district_match.group(1).strip()
+                            break
+                    
+                    # Extract metro station
+                    metro_patterns = [
+                        r'(\w+)\s*m\.',              # matches "Nizami m."
+                        r'(\w+)\s*metro',            # matches "Nizami metro"
+                        r'(\w+)\s*m/st',             # matches "Nizami m/st"
+                        r'(\w+)\s*metro stansiyası'  # matches "Nizami metro stansiyası"
+                    ]
+                    
+                    for pattern in metro_patterns:
+                        metro_match = re.search(pattern, location_text)
+                        if metro_match:
+                            listing_data['metro_station'] = metro_match.group(1).strip()
+                            break
+                
+                # Extract property details (rooms, area, floor)
+                params_table = listing.select_one('.n_elan_box_botom_params')
+                if params_table:
+                    params = params_table.select('td')
+                    
+                    for param in params:
+                        param_text = param.text.strip().lower()
+                        
+                        # Extract room count
+                        if 'otaqlı' in param_text:
+                            rooms_match = re.search(r'(\d+)\s*otaqlı', param_text)
+                            if rooms_match:
+                                try:
+                                    rooms = int(rooms_match.group(1))
+                                    if 1 <= rooms <= 20:  # Reasonable validation
+                                        listing_data['rooms'] = rooms
+                                except ValueError:
+                                    pass
+                        
+                        # Extract area
+                        elif 'm²' in param_text:
+                            area_match = re.search(r'(\d+)\s*m²', param_text)
+                            if area_match:
+                                try:
+                                    area = float(area_match.group(1))
+                                    if 5 <= area <= 1000:  # Reasonable validation
+                                        listing_data['area'] = area
+                                except ValueError:
+                                    pass
+                        
+                        # Extract floor information
+                        elif 'mərtəbə' in param_text:
+                            floor_match = re.search(r'(\d+)/(\d+)', param_text)
+                            if floor_match:
+                                try:
+                                    floor = int(floor_match.group(1))
+                                    total_floors = int(floor_match.group(2))
+                                    if 0 <= floor <= total_floors <= 50:  # Reasonable validation
+                                        listing_data['floor'] = floor
+                                        listing_data['total_floors'] = total_floors
+                                except ValueError:
+                                    pass
+                
+                # Extract listing date
+                date_elem = listing.select_one('.elan_box_date')
+                if date_elem:
+                    date_text = date_elem.text.strip()
+                    try:
+                        if 'Dünən' in date_text:
+                            listing_date = datetime.datetime.now().date() - datetime.timedelta(days=1)
+                        elif 'Bu gün' in date_text:
+                            listing_date = datetime.datetime.now().date()
+                        else:
+                            # Parse date in format "DD Month YYYY"
+                            listing_date = datetime.datetime.strptime(date_text, '%d %B %Y').date()
+                        listing_data['listing_date'] = listing_date
+                    except ValueError:
+                        pass
+                
+                # Extract primary image URL
+                img_elem = listing.select_one('.elan_img_box img')
+                if img_elem:
+                    img_src = img_elem.get('src') or img_elem.get('data-src')
+                    if img_src and 'load.gif' not in img_src:
+                        listing_data['photos'] = json.dumps([img_src])
                 
                 listings.append(listing_data)
                 
