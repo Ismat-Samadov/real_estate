@@ -212,7 +212,7 @@ class IpotekaScraper:
                 continue
                 
         return listings
-
+  
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse the detailed listing page and extract all available information"""
         soup = BeautifulSoup(html, 'lxml')
@@ -388,7 +388,7 @@ class IpotekaScraper:
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-
+  
     async def run(self, pages: int = 2):
         """Run the scraper for specified number of pages"""
         try:
