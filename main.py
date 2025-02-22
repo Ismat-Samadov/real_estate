@@ -1,3 +1,4 @@
+# main.py is the main entry point for the scraper application. It initializes logging, database connection, and scrapers, then runs them concurrently using asyncio.
 import os
 import logging
 import asyncio
