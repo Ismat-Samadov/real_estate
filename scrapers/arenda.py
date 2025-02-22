@@ -1,4 +1,4 @@
-# arenda.az scraper with enhanced error handling and adaptive dela
+# arenda.az scraper with enhanced error handling and adaptive delay 
 import asyncio
 import aiohttp
 import random
