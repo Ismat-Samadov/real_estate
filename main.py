@@ -1,4 +1,3 @@
-# main.py file is the main entry point for the scraper application. It runs the scrapers, saves the results to the database, and sends a report to a Telegram channel.
 import os
 import logging
 import asyncio
