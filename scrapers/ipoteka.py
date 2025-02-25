@@ -16,6 +16,19 @@ class IpotekaScraper:
     BASE_URL = "https://ipoteka.az"
     SEARCH_URL = "https://ipoteka.az/search"
     
+    # << ADDED THESE AT CLASS LEVEL >>
+    MAX_TITLE_LENGTH = 200
+    
+    @staticmethod
+    def safe_truncate(text: Optional[str], max_length: int) -> Optional[str]:
+        """Truncate text to fit max_length safely"""
+        if text is None:
+            return None
+        text = text.strip()
+        if len(text) > max_length:
+            return text[:max_length]
+        return text
+
     def __init__(self):
         """Initialize the scraper with configuration"""
         self.logger = logging.getLogger(__name__)
@@ -25,8 +38,10 @@ class IpotekaScraper:
         """Initialize aiohttp session with browser-like headers"""
         if not self.session:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                              '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,'
+                          'image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9,az;q=0.8',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
@@ -45,10 +60,12 @@ class IpotekaScraper:
             await self.session.close()
             self.session = None
 
+
     async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
         """Fetch page content with retry logic and anti-bot measures"""
-        MAX_RETRIES = int(os.getenv('MAX_RETRIES', 5))
-        DELAY = int(os.getenv('REQUEST_DELAY', 1))
+        MAX_RETRIES = int(os.getenv('MAX_RETRIES', '5'))
+        # Convert to float in case you want fractional delays
+        DELAY = float(os.getenv('REQUEST_DELAY', '1'))
         
         for attempt in range(MAX_RETRIES):
             try:
@@ -98,7 +115,11 @@ class IpotekaScraper:
                 if not listing_url:
                     continue
                 
-                listing_id = re.search(r'/(\d+)-', listing_url).group(1)
+                listing_id_match = re.search(r'/(\d+)-', listing_url)
+                if not listing_id_match:
+                    continue
+                
+                listing_id = listing_id_match.group(1)
                 listing_url = self.BASE_URL + listing_url
                 
                 # Initialize basic data
@@ -175,25 +196,38 @@ class IpotekaScraper:
                 # Extract title/address
                 title_elem = anchor.select_one('span.title')
                 if title_elem:
-                    title = title_elem.text.strip()
-                    if title:
-                        listing_data['title'] = title
-                        listing_data['address'] = title
+                    raw_title = title_elem.text.strip()
+                    if raw_title:
+                        # Truncate the raw title to avoid DB error
+                        truncated_title = self.safe_truncate(raw_title, self.MAX_TITLE_LENGTH)
+                        listing_data['title'] = truncated_title
+                        listing_data['address'] = truncated_title
                         
                         # Try to extract district
-                        district_match = re.search(r'(\w+)\s*r\.', title)
+                        district_match = re.search(r'(\w+)\s*r\.', raw_title)
                         if district_match:
                             listing_data['district'] = district_match.group(1).title()
                             
-                        # Try to extract metro station
-                        metro_match = re.search(r'(\w+)\s*m\.', title)
-                        if metro_match:
-                            listing_data['metro_station'] = metro_match.group(1).title()
+                        # -- Extract any mention of metro station --
+                        station_pattern = re.compile(
+                            r'([A-Za-zƏIıİÖöĞğŞşÇçÜü]+(?:\s+[A-Za-zƏIıİÖöĞğŞşÇçÜü]+)*)'
+                            r'\s*(?:m/s\.?|m\.|metrosu\.?|metrosunun|metro)',
+                            re.IGNORECASE
+                        )
+                        station_match = station_pattern.search(raw_title)
+                        if station_match:
+                            listing_data['metro_station'] = station_match.group(1).strip()
+                        
+                        # Fallback approach for "(\w+) m."
+                        if 'metro_station' not in listing_data:
+                            metro_match = re.search(r'(\w+)\s*m\.', raw_title)
+                            if metro_match:
+                                listing_data['metro_station'] = metro_match.group(1).title()
                 
-                # Set listing type (all listings in ipoteka.az are for sale)
+                # All listings on ipoteka.az are for sale
                 listing_data['listing_type'] = 'sale'
                 
-                # Extract property type from title/address if available
+                # Extract property type from (possibly truncated) listing_data['title']
                 if 'title' in listing_data:
                     title_lower = listing_data['title'].lower()
                     if 'yeni tikili' in title_lower:
@@ -227,11 +261,13 @@ class IpotekaScraper:
             # Extract title and parse components
             title_elem = soup.select_one('.desc_block h2.title')
             if title_elem:
-                title_text = title_elem.text.strip()
-                data['title'] = title_text
+                raw_detail_title = title_elem.text.strip()
+                # Truncate to avoid DB errors
+                truncated_detail_title = self.safe_truncate(raw_detail_title, self.MAX_TITLE_LENGTH)
+                data['title'] = truncated_detail_title
                 
-                # Parse components from title
-                title_parts = [part.strip() for part in title_text.split(',')]
+                # Parse components from raw_detail_title
+                title_parts = [part.strip() for part in raw_detail_title.split(',')]
                 for part in title_parts:
                     part_lower = part.lower().strip()
                     
@@ -259,6 +295,16 @@ class IpotekaScraper:
                     area_match = re.search(r'([\d.]+)\s*m²', part)
                     if area_match:
                         data['area'] = area_match.group(1)
+                        
+                    # Also detect potential metro from the detail title
+                    station_pattern = re.compile(
+                        r'([A-Za-zƏIıİÖöĞğŞşÇçÜü]+(?:\\s+[A-Za-zƏIıİÖöĞğŞşÇçÜü]+)*)'
+                        r'\\s*(?:m/s\\.?|m\\.?|metrosu\\.?|metrosunun|metro)',
+                        re.IGNORECASE
+                    )
+                    station_match = station_pattern.search(part)
+                    if station_match:
+                        data['metro_station'] = station_match.group(1).strip()
             
             # Extract price
             price_elem = soup.select_one('.desc_block .price')
@@ -299,7 +345,7 @@ class IpotekaScraper:
                 for phone in phone_elems:
                     phone_number = phone.get('number') or phone.text.strip()
                     if phone_number:
-                        phones.append(re.sub(r'\s+', '', phone_number))
+                        phones.append(re.sub(r'\\s+', '', phone_number))
                 if phones:
                     data['contact_phone'] = phones[0]  # Store primary phone number
             
@@ -345,23 +391,26 @@ class IpotekaScraper:
                         if area_match:
                             data['area'] = area_match.group(1)
                     elif 'mərtəbə' in label_text:
-                        floor_match = re.search(r'(\d+)/(\d+)', value_text)
+                        floor_match = re.search(r'(\\d+)/(\\d+)', value_text)
                         if floor_match:
                             data['floor'] = int(floor_match.group(1))
                             data['total_floors'] = int(floor_match.group(2))
                     elif 'otaq sayı' in label_text:
-                        rooms_match = re.search(r'(\d+)', value_text)
+                        rooms_match = re.search(r'(\\d+)', value_text)
                         if rooms_match:
                             data['rooms'] = rooms_match.group(1)
                     elif 'təmir' in label_text:
-                        data['has_repair'] = any(x in value_text.lower() for x in ['əla', 'təmirli', 'yaxşı'])
+                        data['has_repair'] = any(
+                            x in value_text.lower() for x in ['əla', 'təmirli', 'yaxşı']
+                        )
                     elif 'sənədin tipi' in label_text:
-                        # This could be used to verify document authenticity
-                        data['has_document'] = 'çıxarış' in value_text.lower() or 'kupça' in value_text.lower()
+                        data['has_document'] = (
+                            'çıxarış' in value_text.lower() or 'kupça' in value_text.lower()
+                        )
             
             # Extract photos
             photos = []
-            photo_links = soup.select('a[data-fancybox="gallery_ads_view"]')
+            photo_links = soup.select('a[data-fancybox=\"gallery_ads_view\"]')
             for link in photo_links:
                 href = link.get('href')
                 if href and not href.endswith('load.gif'):
@@ -372,11 +421,11 @@ class IpotekaScraper:
             if photos:
                 data['photos'] = json.dumps(photos)
             
-            # Extract address if not already set
+            # If no address, fall back to truncated title
             if 'address' not in data and data.get('title'):
                 data['address'] = data['title']
             
-            # Default to 'sale' for listing_type (ipoteka.az is for sales)
+            # Default to 'sale'
             data['listing_type'] = 'sale'
             
             # Default property type if not set
@@ -386,6 +435,7 @@ class IpotekaScraper:
             return data
             
         except Exception as e:
+            # self.logger.error(f\"Error parsing listing detail {listing_id}: {str(e)}\")
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
   
@@ -416,6 +466,7 @@ class IpotekaScraper:
                         try:
                             detail_html = await self.get_page_content(listing['source_url'])
                             detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                            # Merge base listing data with the detailed data
                             all_results.append({**listing, **detail_data})
                         except Exception as e:
                             self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
