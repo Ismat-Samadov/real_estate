@@ -92,29 +92,6 @@ class EmlakAzScraper:
         
         raise Exception(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
 
-    def extract_number(self, text: str) -> Optional[float]:
-        """Extract numeric value from text with validation"""
-        if not text:
-            return None
-        try:
-            # Remove everything except digits and decimal point
-            clean_text = re.sub(r'[^\d.-]', '', text)
-            
-            # Handle multiple decimal points
-            if clean_text.count('.') > 1:
-                parts = clean_text.split('.')
-                clean_text = parts[0] + '.' + ''.join(parts[1:])
-            
-            value = float(clean_text)
-            
-            # Validate reasonable ranges for area
-            if value > 10000:  # Unreasonably large area
-                return None
-                
-            return value
-        except (ValueError, TypeError):
-            return None
-
     def extract_metro_station(self, text: str) -> Optional[str]:
         """Extract metro station from text based on 'm.' pattern"""
         if not text:
@@ -258,38 +235,124 @@ class EmlakAzScraper:
         return photos
 
     def extract_price(self, html: str) -> Dict[str, Optional[float]]:
-        """Extract AZN and USD prices from HTML
+        """Extract AZN and USD prices from HTML with improved parsing
         
-        Example:
+        Examples:
+        Detail page:
         <div class="price">
             <span class="m"><i></i> 253 820</span>
             <span class="d">$ 149 305.00</span>
         </div>
+        
+        Listing card:
+        <p class="price">88 500 AZN</p>
         """
         result = {'price': None, 'price_usd': None, 'currency': 'AZN'}
         soup = BeautifulSoup(html, 'lxml')
         
+        # First try the detail page format
         price_div = soup.select_one('div.price')
         if price_div:
             # Extract AZN price (span.m)
             price_azn = price_div.select_one('span.m')
             if price_azn:
-                # Get text content and clean it
+                # Remove any nested tags and get the text content
+                for tag in price_azn.find_all():
+                    tag.decompose()
                 azn_text = price_azn.get_text(strip=True)
+                
+                # Use extract_number for robust extraction
                 azn_price = self.extract_number(azn_text)
                 if azn_price and 0 < azn_price < 1000000000:
                     result['price'] = azn_price
+                    self.logger.debug(f"Extracted AZN price: {azn_price}")
             
             # Extract USD price (span.d)
             price_usd = price_div.select_one('span.d')
             if price_usd:
-                # Get text content and clean it
-                usd_text = price_usd.get_text(strip=True)
+                usd_text = price_usd.get_text(strip=True).replace('$', '')
                 usd_price = self.extract_number(usd_text)
                 if usd_price and 0 < usd_price < 1000000000:
                     result['price_usd'] = usd_price
+                    self.logger.debug(f"Extracted USD price: {usd_price}")
+        
+        # If no price found, try the listing card format
+        if result['price'] is None:
+            price_p = soup.select_one('p.price')
+            if price_p:
+                price_text = price_p.text.strip()
+                # Remove "AZN" or any currency text
+                price_text = re.sub(r'[^\d\s.,]', '', price_text)
+                price = self.extract_number(price_text)
+                if price and 0 < price < 1000000000:
+                    result['price'] = price
+                    self.logger.debug(f"Extracted card price: {price}")
+        
+        # As a fallback, try another common format (for listings)
+        if result['price'] is None:
+            price_elem = soup.select_one('.price-val, .elan_price')
+            if price_elem:
+                price_text = price_elem.text.strip()
+                price = self.extract_number(price_text)
+                if price and 0 < price < 1000000000:
+                    result['price'] = price
+                    self.logger.debug(f"Extracted fallback price: {price}")
+        
+        # Determine if it's a monthly or daily rental
+        if result['price'] is not None:
+            # Look for rental indicators
+            rent_indicators = soup.select_one('.price, .title, .desc')
+            if rent_indicators:
+                text = rent_indicators.get_text(strip=True).lower()
+                if any(term in text for term in ['/ay', '/gün', '/gun']):
+                    # Set the listing type based on the price indicator
+                    if '/gün' in text or '/gun' in text:
+                        result['listing_type'] = 'daily'
+                    else:
+                        result['listing_type'] = 'monthly'
         
         return result
+
+    def extract_number(self, text: str) -> Optional[float]:
+        """Extract numeric value from text with enhanced parsing
+        
+        Args:
+            text: Text containing a number
+            
+        Returns:
+            Extracted number as float or None if extraction fails
+        """
+        if not text:
+            return None
+        
+        try:
+            # First, clean the text by keeping only digits, dots, commas and spaces
+            clean_text = re.sub(r'[^\d\s.,]', '', text.strip())
+            
+            # Replace commas with dots if needed for decimal separator
+            if ',' in clean_text and '.' not in clean_text:
+                clean_text = clean_text.replace(',', '.')
+            
+            # Remove spaces
+            clean_text = clean_text.replace(' ', '')
+            
+            # Handle multiple dots (keep only the last one)
+            if clean_text.count('.') > 1:
+                parts = clean_text.split('.')
+                clean_text = ''.join(parts[:-1]) + '.' + parts[-1]
+            
+            value = float(clean_text)
+            
+            # Validate reasonable range
+            if value < 0 or value > 1000000000:  # Billion AZN upper limit
+                self.logger.warning(f"Price value {value} outside reasonable range")
+                return None
+                
+            return value
+            
+        except (ValueError, TypeError) as e:
+            self.logger.debug(f"Error extracting number from '{text}': {str(e)}")
+            return None
 
     def extract_amenities(self, html: str) -> Dict[str, any]:
         """Extract property amenities from technical characteristics
@@ -509,57 +572,6 @@ class EmlakAzScraper:
             desc_elem = soup.select_one('.desc p')
             if desc_elem:
                 data['description'] = desc_elem.text.strip()
-
-            # Extract floor information directly from technical characteristics
-            floor_elem = soup.select_one('dd:-soup-contains("Yerləşdiyi mərtəbə")')
-            if floor_elem:
-                floor_text = floor_elem.text.replace('Yerləşdiyi mərtəbə', '').strip()
-                try:
-                    data['floor'] = int(re.search(r'\d+', floor_text).group())
-                except (ValueError, AttributeError):
-                    pass
-            
-            total_floors_elem = soup.select_one('dd:-soup-contains("Mərtəbə sayı")')
-            if total_floors_elem:
-                total_text = total_floors_elem.text.replace('Mərtəbə sayı', '').strip()
-                try:
-                    data['total_floors'] = int(re.search(r'\d+', total_text).group())
-                except (ValueError, AttributeError):
-                    pass
-
-            # Extract other technical characteristics
-            for char in soup.select('dl.technical-characteristics dd'):
-                label_elem = char.select_one('.label')
-                if not label_elem:
-                    continue
-                    
-                label = label_elem.text.strip().lower()
-                value = char.text.replace(label_elem.text, '').strip()
-
-                if 'sahə' in label:
-                    area = self.extract_number(value)
-                    if area and 5 <= area <= 1000:
-                        data['area'] = area
-                elif 'otaqların sayı' in label:
-                    rooms = self.extract_number(value)
-                    if rooms and 1 <= rooms <= 20:
-                        data['rooms'] = int(rooms)
-                elif 'təmiri' in label:
-                    data['has_repair'] = 'təmirli' in value.lower()
-                elif 'əmlakın növü' in label:
-                    prop_type = value.lower()
-                    if 'köhnə tikili' in prop_type:
-                        data['property_type'] = 'old'
-                    elif 'yeni tikili' in prop_type:
-                        data['property_type'] = 'new'
-                    elif 'villa' in prop_type:
-                        data['property_type'] = 'villa'
-                    elif 'həyət evi' in prop_type:
-                        data['property_type'] = 'house'
-                    elif 'obyekt' in prop_type:
-                        data['property_type'] = 'commercial'
-                    else:
-                        data['property_type'] = 'apartment'
 
             # Extract contact information
             seller_elem = soup.select_one('.seller-data')
