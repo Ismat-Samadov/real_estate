@@ -115,25 +115,68 @@ class EmlakAzScraper:
                 return match.group(1).strip()
                 
         return None
+
+    def extract_district(self, html: str) -> Optional[str]:
+        """Extract district from the address section in the listing detail page
         
-    def extract_district(self, text: str) -> Optional[str]:
-        """Extract district from text based on 'r.' pattern"""
-        if not text:
+        Args:
+            html: HTML content of the detail page
+            
+        Returns:
+            District name if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Only extract from the map address section
+        address_elem = soup.select_one('.map-address h4')
+        if not address_elem:
             return None
             
-        # Try various district patterns
+        address_text = address_elem.text.strip()
+        self.logger.debug(f"Found address text: {address_text}")
+        
+        # Check for the exact "Yasamal rayonu" pattern
+        if "Yasamal rayonu" in address_text:
+            self.logger.debug("Found Yasamal district through direct check")
+            return "Yasamal"
+            
+        # Look for specific format in address element
+        if address_text.startswith('Ünvan:'):
+            # First try the common pattern "District rayonu,"
+            district_match = re.search(r'Ünvan:\s*(\w+)\s+rayonu', address_text)
+            if district_match:
+                district = district_match.group(1).strip()
+                self.logger.debug(f"Extracted district from 'Ünvan: X rayonu' pattern: {district}")
+                return district
+                
+            # Check if district is the first part of the address after "Ünvan:"
+            parts = address_text.replace('Ünvan:', '').strip().split(',')
+            if parts and len(parts) > 0:
+                first_part = parts[0].strip()
+                district_parts = first_part.split()
+                if len(district_parts) >= 2 and any(x in district_parts[1].lower() for x in ['r.', 'rayonu', 'rayon']):
+                    district = district_parts[0].strip()
+                    district = ' '.join(word.capitalize() for word in district.split())
+                    self.logger.debug(f"Extracted district as first part of address: {district}")
+                    return district
+        
+        # Try various district patterns with word boundaries
         district_patterns = [
-            r'(\w+)\s+r\.',           # "Yasamal r."
-            r'(\w+)\s+ray\.',         # "Yasamal ray."
-            r'(\w+)\s+rayonu',        # "Yasamal rayonu"
-            r'(\w+)\s+rayon'          # "Yasamal rayon"
+            r'\b(\w+)\s+rayonu\b',         # "Yasamal rayonu"
+            r'\b(\w+)\s+r\.\b',            # "Yasamal r."
+            r'\b(\w+)\s+r-nu\b',           # "Yasamal r-nu"
+            r'\b(\w+)\s+rayon\b'           # "Yasamal rayon"
         ]
         
         for pattern in district_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, address_text)
             if match:
-                return match.group(1).strip()
-                
+                district = match.group(1).strip()
+                # Capitalize first letter of each word
+                district = ' '.join(word.capitalize() for word in district.split())
+                self.logger.debug(f"Extracted district using pattern '{pattern}': {district}")
+                return district
+        
         return None
 
     def extract_floor_info(self, text: str) -> Tuple[Optional[int], Optional[int]]:
@@ -465,7 +508,7 @@ class EmlakAzScraper:
                 metro_station = self.extract_metro_station(title_text)
                 
                 # Extract district from title
-                district = self.extract_district(title_text)
+                # district = self.extract_district(title_text)
                 
                 # Basic listing data
                 listing_data = {
@@ -481,7 +524,6 @@ class EmlakAzScraper:
                     'area': area,
                     'rooms': rooms,
                     'metro_station': metro_station,
-                    'district': district,
                     'created_at': datetime.datetime.now()
                 }
                 
@@ -536,11 +578,10 @@ class EmlakAzScraper:
                 if metro_station:
                     data['metro_station'] = metro_station
                 
-                # Extract district from title
-                district = self.extract_district(title_text)
+                # Extract district from detail page
+                district = self.extract_district(html)
                 if district:
                     data['district'] = district
-
             # Extract address
             address = self.extract_address(html)
             if address:
