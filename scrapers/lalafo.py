@@ -328,58 +328,56 @@ class LalafoScraper:
         
         return listings
 
-    #
-    # For detailed listing page parse
-    
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """
-        Parse the detailed listing page to extract all available information
-        including fields like land_area, correct views_count, expanded amenities,
-        and real updated_at from 'Yenilənmə tarixi:'.
+        Parse the detailed listing page to extract all available information,
+        including robust fallback extraction for district, address, metro_station, 
+        rooms, area, property_type, etc.
         """
         soup = BeautifulSoup(html, 'lxml')
-        
+
         data = {
             'listing_id': listing_id,
             'source_website': 'lalafo.az',
-            # We will parse a real 'updated_at' from the listing. 
-            # Meanwhile we can keep the fallback as "now" and overwrite below:
-            'updated_at': datetime.datetime.now()
+            'updated_at': datetime.datetime.now()  # Fallback if no 'updated_at' found
         }
 
         try:
             #
-            # 1. Extract Title
+            # 1. Title
             #
             title_elem = soup.select_one('h1.AdViewContent__title, h1.AdPage__title, h1.LFHeading')
             if title_elem:
                 data['title'] = title_elem.text.strip()
+            else:
+                data['title'] = ""
 
             #
-            # 2. Extract Description
+            # 2. Description
             #
             desc_elem = soup.select_one('.AdViewContent__description, .description__wrap, .AdPageBody__description')
             if desc_elem:
                 data['description'] = desc_elem.text.strip()
+            else:
+                data['description'] = ""
 
             #
-            # 3. Extract Price
+            # 3. Price
             #
-            price_elem = soup.select_one('.AdViewContent__price-current, .AdViewPrice__price-current, .price')
-            if not price_elem:
-                # fallback older selectors
-                price_elem = soup.select_one('.ad-detail-price-container p.LFHeading, .AdPage__price')
+            price_elem = soup.select_one(
+                '.AdViewContent__price-current, .AdViewPrice__price-current, '
+                '.price, .ad-detail-price-container p.LFHeading, .AdPage__price'
+            )
             if price_elem:
-                price, currency = self.extract_price(price_elem.text)
-                if price:
-                    data['price'] = price
+                extracted_price, currency = self.extract_price(price_elem.text)
+                if extracted_price:
+                    data['price'] = extracted_price
                     data['currency'] = currency
 
             #
-            # 4. Key-Value Parameters
+            # 4. Parse Key-Value fields (param list)
             #
             params_list = soup.select('.AdViewParameters__item, .details-page__params li')
-            # We'll accumulate 'amenities' in a list
             amenities = []
 
             for param in params_list:
@@ -387,87 +385,64 @@ class LalafoScraper:
                 value_elem = param.select_one('.AdViewParameters__value, a.LFLink, p.LFParagraph:nth-child(2)')
                 if not label_elem or not value_elem:
                     continue
-                
+
                 label_text = label_elem.get_text(strip=True).lower()
                 value_text = value_elem.get_text(strip=True)
 
-                # Rooms
                 if 'otaqların sayı' in label_text or 'otaq' in label_text:
                     match = re.search(r'(\d+)', value_text)
                     if match:
                         data['rooms'] = int(match.group(1))
 
-                # Area
                 elif 'sahə' in label_text and 'm2' in label_text:
-                    # e.g. "120" or "120 m2"
                     match = re.search(r'(\d+)', value_text)
                     if match:
                         data['area'] = float(match.group(1))
 
-                # Land area (Sot)
                 elif 'torpaq sahəsi' in label_text:
-                    # They might show "Torpaq sahəsi (Sot): 3"
                     match = re.search(r'(\d+)', value_text)
                     if match:
                         data['land_area'] = float(match.group(1))
 
-                # Total floors
                 elif 'mərtəbələrin sayı' in label_text:
                     match = re.search(r'(\d+)', value_text)
                     if match:
                         data['total_floors'] = int(match.group(1))
 
-                # Floor (if it’s an apartment)
                 elif label_text.startswith('mərtəbə') and 'mərtəbələrin' not in label_text:
                     # e.g. "Mərtəbə: 5"
                     match = re.search(r'(\d+)', value_text)
                     if match:
                         data['floor'] = int(match.group(1))
 
-                # "Təklifin növü" => agent/owner
                 elif 'təklifin növü' in label_text:
                     if 'makler' in value_text.lower() or 'agent' in value_text.lower():
                         data['contact_type'] = 'agent'
                     else:
                         data['contact_type'] = 'owner'
 
-                # "Təmir" => has_repair
                 elif 'təmir' in label_text:
-                    # e.g. "Yeni təmirli", "Əla təmirli"
                     data['has_repair'] = True
 
-                # "metro stansiyası"
                 elif 'metro stansiyası' in label_text:
                     # e.g. "m. Əhmədli"
                     data['metro_station'] = re.sub(r'^m\.\s*', '', value_text).strip()
 
-                # "inzibati rayonlar"
                 elif 'inzibati rayonlar' in label_text:
                     # e.g. "Suraxanı r."
-                    district_clean = re.sub(r'\s*r\.$', '', value_text).strip()
-                    data['district'] = district_clean
+                    data['district'] = value_text.strip()
 
-                # Another "Rayon:" or "Qəs."
                 elif label_text.startswith('rayon'):
                     # e.g. "Hövsan qəs."
-                    data['location'] = value_text
+                    data['address'] = value_text.strip()
 
-                # "Kredit" => has_credit
                 elif 'kredit' in label_text:
                     if 'var' in value_text.lower():
                         data['has_credit'] = True
 
-                # Some listings have lines like "Kommunal xətlər:", "Evin şəraiti:", "Sənədlər:"
-                # that contain multiple comma-separated items. We treat them as amenities.
                 elif any(x in label_text for x in ['kommunal xətlər', 'evin şəraiti', 'sənədlər']):
-                    # Typically something like "Kombi, Qaz, Su, İnternet, İşıq"
-                    # or "Eyvan (Balkon), Hasar"
-                    # or "Kupça (Çıxarış)"
-                    # We'll split by commas and add to `amenities`.
                     items = [i.strip() for i in value_text.split(',')]
                     for itm in items:
-                        # Convert to lowercase or keep original?
-                        # You can store them in original form or in English.  
                         if itm and itm not in amenities:
                             amenities.append(itm)
 
@@ -475,68 +450,50 @@ class LalafoScraper:
                 data['amenities'] = ','.join(amenities)
 
             #
-            # 5. Correct Views Count from "Göstərilmə: 2545"
-            #
-            # Instead of picking up the smaller "40" from the eye icon, 
-            # let's specifically target `.impressions span.LFCaption` 
-            # and look for the text "Göstərilmə:".
+            # 5. Views Count
             #
             impressions_elem = soup.select_one('.impressions span.LFCaption')
             if impressions_elem:
-                # e.g. "Göstərilmə: 2545"
                 m = re.search(r'Göstərilmə:\s*(\d+)', impressions_elem.text)
                 if m:
                     data['views_count'] = int(m.group(1))
 
             #
-            # 6. Extract Creation/Update Dates from ".about-ad-info__date"
+            # 6. Creation / Update dates
             #
             date_elems = soup.select('.about-ad-info__date')
-            # They might look like:
-            #  - "Yaradılma vaxtı: 24 fev 2025"
-            #  - "Yenilənmə tarixi: 25 fev 2025"
             month_map = {
                 'yan': 1, 'fev': 2, 'mar': 3, 'apr': 4, 'may': 5, 'iyn': 6,
                 'iyl': 7, 'avq': 8, 'sen': 9, 'okt': 10, 'noy': 11, 'dek': 12
             }
-
             for elem in date_elems:
                 txt = elem.get_text(strip=True).lower()
-                # "Yaradılma vaxtı: 24 fev 2025"
-                if 'yaradılma' in txt or 'yaradılma vaxtı' in txt:
+                if 'yaradılma' in txt:  # e.g. "Yaradılma vaxtı: 24 fev 2025"
                     match = re.search(r'(\d+)\s+(\w+)\s+(\d{4})', txt)
                     if match:
-                        day_str, month_str, year_str = match.groups()
-                        dd = int(day_str)
-                        mm = month_map.get(month_str[:3], 0)  # 'fev' -> 2
-                        yyyy = int(year_str)
-                        data['listing_date'] = datetime.date(yyyy, mm, dd)
-
-                # "Yenilənmə tarixi: 25 fev 2025"
-                if 'yenilənmə' in txt:
-                    match = re.search(r'(\d+)\s+(\w+)\s+(\d{4})', txt)
-                    if match:
-                        day_str, month_str, year_str = match.groups()
-                        dd = int(day_str)
+                        dd, month_str, yyyy = match.groups()
                         mm = month_map.get(month_str[:3], 0)
-                        yyyy = int(year_str)
-                        # Overwrite 'updated_at' with real date:
-                        data['updated_at'] = datetime.datetime(yyyy, mm, dd)
+                        data['listing_date'] = datetime.date(int(yyyy), mm, int(dd))
+                elif 'yenilənmə' in txt:
+                    match = re.search(r'(\d+)\s+(\w+)\s+(\d{4})', txt)
+                    if match:
+                        dd, month_str, yyyy = match.groups()
+                        mm = month_map.get(month_str[:3], 0)
+                        data['updated_at'] = datetime.datetime(int(yyyy), mm, int(dd))
 
             #
-            # 7. Extract Phone / WhatsApp
+            # 7. Phone / WhatsApp
             #
             phone_wrap = soup.select_one('.PhoneView__number, .phone-wrap')
             if phone_wrap:
                 phone_text = phone_wrap.get_text(strip=True)
                 data['contact_phone'] = re.sub(r'\s+', '', phone_text)
 
-            # For WhatsApp detection:
             whatsapp_elem = soup.select_one('.PhoneView__whatsapp, .whatsapp-icon')
             data['whatsapp_available'] = 1 if whatsapp_elem else 0
 
             #
-            # 8. Extract Seller Info
+            # 8. Seller Info
             #
             user_name = soup.select_one('.AdViewUser__name, .userName-text')
             if user_name:
@@ -546,26 +503,34 @@ class LalafoScraper:
                     data['contact_type'] = 'agent'
 
             #
-            # 9. Extract Photos
+            # 9. Photos (existing + slick-dots fallback)
             #
             photos = []
+
+            # Existing approach for .AdViewGallery__img-wrap or .carousel__img-wrap
             picture_elems = soup.select('.AdViewGallery__img-wrap picture, .carousel__img-wrap picture')
             for pic in picture_elems:
-                # Look for webp or jpeg <source>
                 source = pic.select_one('source[type="image/webp"]') or pic.select_one('source[type="image/jpeg"]')
                 if source and source.get('srcset'):
                     src = source.get('srcset')
                     if src and not src.endswith(('load.gif', 'placeholder.png')):
                         photos.append(src)
                 else:
-                    # Fallback <img>
                     img = pic.select_one('img[src]')
                     if img:
                         src = img.get('src')
                         if src and not src.endswith(('load.gif', 'placeholder.png')):
                             photos.append(src)
 
+            # New approach for slick-dots
+            slick_imgs = soup.select('.slick-dots.slick-thumb li a img[src]')
+            for im in slick_imgs:
+                src = im.get('src', '').strip()
+                if src and not src.endswith(('load.gif', 'placeholder.png')):
+                    photos.append(src)
+
             if photos:
+                # Deduplicate
                 unique_photos = []
                 for p in photos:
                     if p not in unique_photos:
@@ -573,28 +538,67 @@ class LalafoScraper:
                 data['photos'] = json.dumps(unique_photos)
 
             #
-            # 10. Fallback text-based extraction
+            # 10. Potential city name from .map-with-city-marker
             #
-            combined_text = (data.get('title','') + ' ' + data.get('description','')).lower()
-            # If we missed 'rooms' or 'area', etc., do a last fallback:
+            city_elem = soup.select_one('.map-with-city-marker p.LFParagraph')
+            if city_elem:
+                data['city'] = city_elem.get_text(strip=True)
+
+            #
+            # 11. Attempt lat/long if present (likely absent)
+            #
+            # If Lalafo doesn’t provide real lat/lng, we can't parse them from tile or <svg>.
+            # If you ever see data-lat / data-lng, parse them here.
+
+            #
+            # 12. Extended fallback: parse missing fields from Title & Description
+            #
+            combined_text = (data['title'] + ' ' + data['description']).lower()
+
+            # Rooms fallback
             if 'rooms' not in data:
                 r = self.extract_room_count(combined_text)
                 if r:
                     data['rooms'] = r
+
+            # Area fallback
             if 'area' not in data:
                 a = self.extract_area(combined_text)
                 if a:
                     data['area'] = a
+
+            # District fallback
             if 'district' not in data:
                 d = self.extract_district(combined_text)
                 if d:
                     data['district'] = d
+
+            # Listing type fallback
             if 'listing_type' not in data:
                 data['listing_type'] = self.extract_listing_type(combined_text)
+
+            # Property type fallback
             if 'property_type' not in data:
                 data['property_type'] = self.extract_property_type(combined_text)
+
+            # has_repair fallback
             if 'has_repair' not in data:
                 data['has_repair'] = any(x in combined_text for x in ['təmirli','yeni təmir','əla təmir'])
+
+            #
+            # 13. Additional fallback for Metro if in Title
+            #
+            # e.g. if the title says "28 may" or "Neftçilər" or "Koroğlu" we parse that:
+            if 'metro_station' not in data or not data['metro_station']:
+                # Very simplistic approach: if the title or desc has '28 may'
+                # you can set data['metro_station'] = '28 May'
+                # or parse with a dictionary of known station synonyms.
+                known_metros = ['28 may', 'nizami', 'xalqlar dostluğu', 'nərimanov',
+                                'koroğlu', 'nəftçilər', 'azadlıq prospekti']
+                for station in known_metros:
+                    if station in combined_text:
+                        data['metro_station'] = station.title()
+                        break
 
             return data
 
@@ -602,10 +606,6 @@ class LalafoScraper:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
 
-
-    #
-    # Main run method
-    #
     async def run(self, pages: int = 2) -> List[Dict]:
         """Run the scraper for specified number of pages"""
         try:
