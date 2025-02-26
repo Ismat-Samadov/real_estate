@@ -159,25 +159,181 @@ class LalafoScraper:
                     pass
         return None
 
-    def extract_district(self, text: str) -> Optional[str]:
-        """Extract district from text (simple heuristics)"""
-        if not text:
-            return None
+    def extract_district(self, html: str) -> Optional[str]:
+        """
+        Extract district information from the listing HTML.
+        Look specifically for "İnzibati rayonlar" parameter.
+        
+        Args:
+            html: HTML content of the listing detail page
             
-        # Example patterns: "Nizami r.", "Sabunçu rayonu"
-        # You can refine or localize for Azerbaijani district naming
+        Returns:
+            District name if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Look for district in parameters list (most reliable source)
+        for param_item in soup.select('.details-page__params li'):
+            label = param_item.select_one('p')
+            value = param_item.select_one('a')
+            
+            if label and value and 'İnzibati rayonlar' in label.text:
+                district_text = value.text.strip()
+                # Remove trailing "r." if present
+                return re.sub(r'\s*r\.$', '', district_text)
+        
+        # Fallback: look for district pattern in the title or description
+        combined_text = ''
+        title = soup.select_one('h1.LFHeading')
+        if title:
+            combined_text += title.text + ' '
+        
+        desc = soup.select_one('.description__wrap')
+        if desc:
+            combined_text += desc.text
+        
+        # Try to find district patterns
         district_patterns = [
-            r'([A-Za-z\u0400-\u04FF]+)\s*r\.',         # e.g. 'Nizami r.'
-            r'([A-Za-z\u0400-\u04FF]+)\s*rayonu'       # e.g. 'Sabunçu rayonu'
+            r'(\w+)\s+r\.',           # "Xəzər r."
+            r'(\w+)\s+rayonu',        # "Xəzər rayonu"
+            r'(\w+)\s+r-nu',          # "Xəzər r-nu"
+            r'(\w+)\s+rayon'          # "Xəzər rayon"
         ]
         
         for pattern in district_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
+            match = re.search(pattern, combined_text, re.IGNORECASE)
             if match:
-                district = match.group(1).strip()
-                if district:
-                    return district.capitalize()
-                    
+                return match.group(1).strip()
+        
+        return None
+
+    def extract_location(self, html: str) -> Optional[str]:
+        """
+        Extract specific location information from HTML.
+        Focuses on the "Rayon" field which contains the specific area/settlement.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            Location name if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # First look in the parameters for "Rayon" field
+        for param_item in soup.select('.details-page__params li'):
+            label = param_item.select_one('p')
+            value = param_item.select_one('a')
+            
+            if label and value and 'Rayon:' in label.text:
+                return value.text.strip()
+        
+        # Next, try to get the city from the map marker
+        city_marker = soup.select_one('.map-with-city-marker p')
+        if city_marker:
+            return city_marker.text.strip()
+        
+        # Fallback: check breadcrumbs for location info
+        breadcrumbs = soup.select('.detail-breadcrumbs__item')
+        if len(breadcrumbs) > 3:  # Usually the 4th breadcrumb contains area info
+            return breadcrumbs[3].text.strip()
+        
+        return None
+
+    def extract_coordinates(self, html: str) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Extract coordinates from the map element in the HTML.
+        Uses SVG path center point or other available coordinate data.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            Tuple of (latitude, longitude) if found, (None, None) otherwise
+        """
+        # Look for SVG path which contains the map marker
+        center_match = re.search(r'class="leaflet-interactive".*?d="M([^,]+),([^ ]+)a', html)
+        
+        # If SVG center point is found, we need to convert from pixel coordinates
+        # to geographical coordinates - this is complex and requires additional 
+        # map metadata, so best to use a fallback approach
+        
+        # Search for any explicit lat/lon in the page
+        lat_match = re.search(r'lat="([^"]+)"', html) or re.search(r'data-lat="([^"]+)"', html)
+        lon_match = re.search(r'lon="([^"]+)"', html) or re.search(r'data-lng="([^"]+)"', html)
+        
+        if lat_match and lon_match:
+            try:
+                lat = float(lat_match.group(1))
+                lon = float(lon_match.group(1))
+                # Validate reasonable bounds for Azerbaijan
+                if 38.0 <= lat <= 42.0 and 44.5 <= lon <= 51.0:
+                    return lat, lon
+            except (ValueError, TypeError):
+                pass
+        
+        # Search for a ViewBox that might contain map bounds
+        viewbox_match = re.search(r'viewBox="([^"]+)"', html)
+        if viewbox_match:
+            try:
+                # Parse the SVG viewBox values
+                values = viewbox_match.group(1).split()
+                if len(values) == 4:
+                    # This isn't directly convertible to lat/lon without additional data
+                    # We would need the map projection parameters
+                    pass
+            except (ValueError, IndexError):
+                pass
+        
+        return None, None
+
+    def extract_address(self, html: str) -> Optional[str]:
+        """
+        Extract address information from the listing HTML.
+        Combines location information with address details if available.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            Combined address string if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        address_parts = []
+        
+        # Try to get district
+        district = self.extract_district(html)
+        if district:
+            address_parts.append(f"{district} r.")
+        
+        # Try to get specific location/settlement
+        location = self.extract_location(html)
+        if location:
+            address_parts.append(location)
+        
+        # Look for any additional address info in the description
+        description = soup.select_one('.description__wrap')
+        if description:
+            desc_text = description.text.strip()
+            
+            # Look for common address indicators in the text
+            address_indicators = ["ünvan", "yerləşir", "küçəsi", "prospekti"]
+            for indicator in address_indicators:
+                if indicator in desc_text.lower():
+                    # Find the sentence containing the address indicator
+                    sentences = re.split(r'[.!?]', desc_text)
+                    for sentence in sentences:
+                        if indicator in sentence.lower():
+                            # Clean and add this to address parts
+                            cleaned = sentence.strip()
+                            if len(cleaned) < 100:  # Only use reasonably sized address fragments
+                                address_parts.append(cleaned)
+                            break
+                    break
+        
+        if address_parts:
+            return ", ".join(address_parts)
+        
         return None
 
     def extract_listing_type(self, text: str) -> str:
@@ -292,17 +448,17 @@ class LalafoScraper:
                     except (ValueError, IndexError):
                         listing_data['listing_date'] = datetime.datetime.now().date()
                 
-                # District or location
-                location_elem = card.select_one('.ad-meta-info-default__location')
-                if location_elem:
-                    location_text = location_elem.text.strip()
-                    # Attempt district parse
-                    district = self.extract_district(location_text)
-                    if district:
-                        listing_data['district'] = district
-                    else:
-                        # If it's not a recognized district pattern, store in 'location' for fallback
-                        listing_data['location'] = location_text
+                # # District or location
+                # location_elem = card.select_one('.ad-meta-info-default__location')
+                # if location_elem:
+                #     location_text = location_elem.text.strip()
+                #     # Attempt district parse
+                #     district = self.extract_district(location_text)
+                #     if district:
+                #         listing_data['district'] = district
+                #     else:
+                #         # If it's not a recognized district pattern, store in 'location' for fallback
+                #         listing_data['location'] = location_text
                 
                 # Quick attempt at rooms + area from the short title
                 if 'title' in listing_data:
@@ -432,9 +588,9 @@ class LalafoScraper:
                     # e.g. "Suraxanı r."
                     data['district'] = value_text.strip()
 
-                elif label_text.startswith('rayon'):
-                    # e.g. "Hövsan qəs."
-                    data['address'] = value_text.strip()
+                # elif label_text.startswith('rayon'):
+                #     # e.g. "Hövsan qəs."
+                #     data['address'] = value_text.strip()
 
                 elif 'kredit' in label_text:
                     if 'var' in value_text.lower():
@@ -568,10 +724,10 @@ class LalafoScraper:
                     data['area'] = a
 
             # District fallback
-            if 'district' not in data:
-                d = self.extract_district(combined_text)
-                if d:
-                    data['district'] = d
+            # if 'district' not in data:
+            #     d = self.extract_district(combined_text)
+            #     if d:
+            #         data['district'] = d
 
             # Listing type fallback
             if 'listing_type' not in data:
@@ -600,6 +756,15 @@ class LalafoScraper:
                         data['metro_station'] = station.title()
                         break
 
+            # Enhanced extraction of location-related fields
+            data['district'] = self.extract_district(html)
+            data['location'] = self.extract_location(html)
+            lat, lon = self.extract_coordinates(html)
+            if lat is not None and lon is not None:
+                data['latitude'] = lat
+                data['longitude'] = lon
+            data['address'] = self.extract_address(html)
+            
             return data
 
         except Exception as e:
