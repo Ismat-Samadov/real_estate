@@ -279,11 +279,11 @@ class TapAzScraper:
         return None
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        """Fetch phone numbers for a listing using the tap.az API"""
+        """Fetch phone numbers for a listing using the tap.az API with proper proxy support"""
         try:
             url = f"https://tap.az/ads/{listing_id}/phones"
             
-            # Required headers for the phone API request
+            # Keep the original headers exactly as they were
             headers = {
                 'Accept': '*/*',
                 'Origin': 'https://tap.az',
@@ -296,9 +296,13 @@ class TapAzScraper:
                 'Priority': 'u=1, i'
             }
             
+            self.logger.info(f"Fetching phone numbers for listing {listing_id} with proxy: {self.proxy_url}")
+            
+            # The only change: explicitly pass the proxy_url to the request
             async with self.session.post(
                 url,
                 headers=headers,
+                proxy=self.proxy_url,  # This is the only change - explicitly use the proxy
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 if response.status == 200:
