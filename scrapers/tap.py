@@ -279,39 +279,77 @@ class TapAzScraper:
         return None
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        """Fetch phone numbers for a listing using the tap.az API with proper proxy support"""
+        """Fetch phone numbers for a listing using the tap.az API with proper headers and cookies"""
         try:
-            url = f"https://tap.az/ads/{listing_id}/phones"
+            # First, we need to get the CSRF token from the detail page
+            detail_url = f"https://tap.az/elanlar/dasinmaz-emlak/menziller/{listing_id}"
             
-            # Keep the original headers exactly as they were
-            headers = {
-                'Accept': '*/*',
-                'Origin': 'https://tap.az',
-                'Referer': f'https://tap.az/elanlar/dasinmaz-emlak/menziller/{listing_id}',
-                'X-Requested-With': 'XMLHttpRequest',
-                'DNT': '1',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'Priority': 'u=1, i'
-            }
+            # Get the detail page HTML to extract CSRF token
+            self.logger.info(f"Fetching detail page to extract CSRF token: {detail_url}")
             
-            self.logger.info(f"Fetching phone numbers for listing {listing_id} with proxy: {self.proxy_url}")
-            
-            # The only change: explicitly pass the proxy_url to the request
-            async with self.session.post(
-                url,
-                headers=headers,
-                proxy=self.proxy_url,  # This is the only change - explicitly use the proxy
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    return data.get('phones', [])
-                else:
-                    self.logger.warning(f"Failed to get phone numbers for listing {listing_id}: Status {response.status}")
+            # Make sure to use the proxy for this request too
+            async with self.session.get(detail_url, proxy=self.proxy_url) as detail_response:
+                if detail_response.status != 200:
+                    self.logger.warning(f"Failed to get detail page for CSRF token: {detail_response.status}")
                     return []
-                    
+                
+                detail_html = await detail_response.text()
+                
+                # Extract CSRF token from meta tag
+                csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', detail_html)
+                if not csrf_match:
+                    self.logger.warning(f"Could not find CSRF token in detail page")
+                    return []
+                
+                csrf_token = csrf_match.group(1)
+                self.logger.info(f"Found CSRF token: {csrf_token[:20]}...")
+                
+                # Now call the phones API with the correct headers and cookies
+                phones_url = f"https://tap.az/ads/{listing_id}/phones"
+                
+                # Keep all cookies from the detail page
+                cookies = {cookie.key: cookie.value for cookie in self.session.cookie_jar}
+                
+                # Set up proper headers
+                headers = {
+                    'Accept': '*/*',
+                    'Origin': 'https://tap.az',
+                    'Referer': detail_url,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'DNT': '1',
+                    'Sec-Fetch-Dest': 'empty',
+                    'Sec-Fetch-Mode': 'cors',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Priority': 'u=1, i',
+                    'User-Agent': self.session.headers.get('User-Agent'),
+                    'X-CSRF-Token': csrf_token  # Critical header
+                }
+                
+                self.logger.info(f"Making phone request with CSRF token and cookies")
+                
+                # Empty POST request with CSRF token
+                async with self.session.post(
+                    phones_url,
+                    headers=headers,
+                    cookies=cookies,
+                    proxy=self.proxy_url
+                ) as response:
+                    if response.status == 200:
+                        try:
+                            data = await response.json()
+                            phones = data.get('phones', [])
+                            self.logger.info(f"Successfully retrieved {len(phones)} phone numbers")
+                            return phones
+                        except Exception as e:
+                            self.logger.error(f"Failed to parse phone API response: {str(e)}")
+                            response_text = await response.text()
+                            self.logger.error(f"Raw response: {response_text[:200]}")
+                    else:
+                        self.logger.warning(f"Phone API returned status {response.status}")
+                        response_text = await response.text()
+                        self.logger.warning(f"Error response: {response_text[:200]}")
+                        return []
+                        
         except Exception as e:
             self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
             return []
