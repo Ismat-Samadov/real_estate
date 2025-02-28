@@ -1,4 +1,3 @@
-# tap.py
 import asyncio
 import aiohttp
 import random
@@ -121,20 +120,6 @@ class TapAzScraper:
                 return None
         return None
 
-    # def extract_rooms(self, text: str) -> Optional[int]:
-    #     """Extract number of rooms from text"""
-    #     if not text:
-    #         return None
-    #     match = re.search(r'(\d+)-otaqlı', text)
-    #     if match:
-    #         try:
-    #             rooms = int(match.group(1))
-    #             if 1 <= rooms <= 20:  # Reasonable room range
-    #                 return rooms
-    #         except (ValueError, TypeError):
-    #             pass
-    #     return None
-
     def extract_rooms(self, text: str) -> Optional[int]:
         """
         Extract number of rooms from text. Returns 0 if room count exceeds 20.
@@ -159,6 +144,138 @@ class TapAzScraper:
             except (ValueError, TypeError):
                 pass
                 
+        return None
+    
+    def extract_floor_info(self, text: str) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Extract floor information from text patterns like "Mərtəbə: 2/5" or "2/5 mərtəbə"
+        
+        Args:
+            text (str): Text containing floor information
+            
+        Returns:
+            Tuple of (current floor, total floors) if found, (None, None) otherwise
+        """
+        if not text:
+            return None, None
+            
+        # Common floor patterns
+        patterns = [
+            r'mərtəbə:\s*(\d+)/(\d+)',  # Mərtəbə: 2/5
+            r'(\d+)/(\d+)\s*mərtəbə',   # 2/5 mərtəbə
+            r'mərtəbə\s*(\d+)/(\d+)',   # mərtəbə 2/5
+            r'(\d+)-ci mərtəbə\/(\d+)', # 2-ci mərtəbə/5
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    current_floor = int(match.group(1))
+                    total_floors = int(match.group(2))
+                    
+                    # Basic validation
+                    if 0 <= current_floor <= 200 and 1 <= total_floors <= 200:
+                        return current_floor, total_floors
+                except (ValueError, IndexError):
+                    pass
+                    
+        return None, None
+    
+    def extract_coordinates(self, html: str) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Extract coordinates from the map element in the HTML.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            Tuple of (latitude, longitude) if found, (None, None) otherwise
+        """
+        # For tap.az items, try different patterns to capture coordinates
+        
+        # First try to look for any explicit lat/lon in the page (most common in tap.az)
+        patterns = [
+            # Standard patterns from various map implementations
+            r'lat="([^"]+)".*?lon="([^"]+)"',
+            r'data-lat="([^"]+)".*?data-lng="([^"]+)"',
+            r'data-lat="([^"]+)".*?data-lon="([^"]+)"',
+            # Google maps patterns
+            r'google_map.*?value="\(([\d.]+),\s*([\d.]+)\)"',
+            r'center=([\d.]+),([\d.]+)',
+            # Leaflet patterns
+            r'L\.marker\(\[([\d.]+),\s*([\d.]+)\]\)',
+            # General coordinate text patterns
+            r'coordinates.*?([\d.]+),\s*([\d.]+)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, html, re.IGNORECASE | re.DOTALL)
+            if match:
+                try:
+                    lat = float(match.group(1))
+                    lon = float(match.group(2))
+                    # Validate reasonable bounds for Azerbaijan
+                    if 38.0 <= lat <= 42.0 and 44.5 <= lon <= 51.0:
+                        return lat, lon
+                except (ValueError, TypeError, IndexError):
+                    pass
+        
+        # Additional pattern for google maps embed
+        iframe_match = re.search(r'google\.com/maps/embed.*?q=([\d.]+),([\d.]+)', html)
+        if iframe_match:
+            try:
+                lat = float(iframe_match.group(1))
+                lon = float(iframe_match.group(2))
+                if 38.0 <= lat <= 42.0 and 44.5 <= lon <= 51.0:
+                    return lat, lon
+            except (ValueError, TypeError):
+                pass
+        
+        return None, None
+    
+    def extract_amenities(self, html: str) -> Optional[str]:
+        """
+        Extract amenities from the listing HTML.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            JSON string of amenities if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        amenities = []
+        
+        # Look for property details section
+        for prop in soup.select('.product-properties__i'):
+            label = prop.select_one('.product-properties__i-name')
+            value = prop.select_one('.product-properties__i-value')
+            
+            if label and value:
+                amenities.append(f"{label.text.strip()}: {value.text.strip()}")
+        
+        # Look for other amenity sections if available
+        amenity_sections = soup.select('.amenities, .features, .property-features')
+        for section in amenity_sections:
+            for item in section.select('li, .item'):
+                text = item.text.strip()
+                if text and text not in amenities:
+                    amenities.append(text)
+        
+        # Extract features from description
+        desc_elem = soup.select_one('.product-description__content')
+        if desc_elem:
+            desc_text = desc_elem.text.strip()
+            # Look for features marked with bullet points or dashes
+            bullet_items = re.findall(r'[•\-\*]\s*([^\n•\-\*]+)', desc_text)
+            for item in bullet_items:
+                item_text = item.strip()
+                if item_text and len(item_text) < 100 and item_text not in amenities:
+                    amenities.append(item_text)
+        
+        if amenities:
+            return json.dumps(amenities)
         return None
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
@@ -303,28 +420,26 @@ class TapAzScraper:
                                 data['area'] = round(num, 2)
                         except (ValueError, TypeError):
                             pass
-                # elif 'yerləşmə yeri' in label_text:
-                #     data['location'] = value_text
-                #     if 'r.' in value_text:
-                #         data['district'] = value_text.split('r.')[0].strip()
-                #     if 'm.' in value_text:
-                #         data['metro_station'] = value_text.split('m.')[0].strip()
                 elif 'yerləşmə yeri' in label_text:
                     data['location'] = value_text
-                    # Try to extract district with various patterns
-                    district_patterns = [
-                        r'(\w+)\s*r\.',  # matches "Yasamal r."
-                        r'(\w+)\s*ray\.',  # matches "Yasamal ray."
-                        r'(\w+)\s*rayonu',  # matches "Yasamal rayonu"
-                        r'(\w+)\s*rayon',   # matches "Yasamal rayon"
-                        r'(\w+)\s*district' # matches "Yasamal district"
-                    ]
-                    
-                    for pattern in district_patterns:
-                        district_match = re.search(pattern, value_text, re.IGNORECASE)
-                        if district_match:
-                            data['district'] = district_match.group(1).strip()
-                            break
+                    # For district, if location contains "qəs." (settlement), extract it as district
+                    if 'qəs.' in value_text:
+                        data['district'] = value_text.replace('qəs.', '').strip()
+                    else:
+                        # Try other district patterns
+                        district_patterns = [
+                            r'(\w+)\s*r\.',  # matches "Yasamal r."
+                            r'(\w+)\s*ray\.',  # matches "Yasamal ray."
+                            r'(\w+)\s*rayonu',  # matches "Yasamal rayonu"
+                            r'(\w+)\s*rayon',   # matches "Yasamal rayon"
+                            r'(\w+)\s*district' # matches "Yasamal district"
+                        ]
+                        
+                        for pattern in district_patterns:
+                            district_match = re.search(pattern, value_text, re.IGNORECASE)
+                            if district_match:
+                                data['district'] = district_match.group(1).strip()
+                                break
                     
                     # Try to extract metro station with various patterns
                     metro_patterns = [
@@ -337,22 +452,66 @@ class TapAzScraper:
                     for pattern in metro_patterns:
                         metro_match = re.search(pattern, value_text, re.IGNORECASE)
                         if metro_match:
-                            data['metro_station'] = metro_match.group(1)
+                            data['metro_station'] = metro_match.group(1).strip()
                             break
                             
                     # If location contains address-like information, update address field
                     if not any(x in value_text.lower() for x in ['metro', 'rayon', 'district']) and len(value_text) > 5:
                         data['address'] = value_text.strip()
+                elif 'otaq sayı' in label_text:
+                    try:
+                        rooms = int(re.sub(r'[^\d]', '', value_text))
+                        if 1 <= rooms <= 20:
+                            data['rooms'] = rooms
+                    except (ValueError, TypeError):
+                        pass
+                elif 'mərtəbə' in label_text:
+                    # Extract floor information
+                    floor_match = re.search(r'(\d+)/(\d+)', value_text)
+                    if floor_match:
+                        try:
+                            floor = int(floor_match.group(1))
+                            total_floors = int(floor_match.group(2))
+                            if 0 <= floor <= 200 and 1 <= total_floors <= 200:
+                                data['floor'] = floor
+                                data['total_floors'] = total_floors
+                        except (ValueError, IndexError):
+                            pass
                 elif 'elanın tipi' in label_text:
                     if 'kirayə' in value_text.lower():
                         data['listing_type'] = 'monthly'
                     elif 'satış' in value_text.lower():
                         data['listing_type'] = 'sale'
-                elif 'binanın tipi' in label_text:
+                elif 'binanın tipi' in label_text or 'əmlakın növü' in label_text:
                     if 'yeni tikili' in value_text.lower():
                         data['property_type'] = 'new'
                     elif 'köhnə tikili' in value_text.lower():
                         data['property_type'] = 'old'
+                    elif 'həyət evi' in value_text.lower():
+                        data['property_type'] = 'house'
+                    elif 'mənzil' in value_text.lower():
+                        data['property_type'] = 'apartment'
+            
+            # Extract floor information if not already found
+            if 'floor' not in data or 'total_floors' not in data:
+                for info_elem in soup.select('.product-properties, .product-description__content'):
+                    text = info_elem.text.strip().lower()
+                    floor, total = self.extract_floor_info(text)
+                    if floor is not None and 'floor' not in data:
+                        data['floor'] = floor
+                    if total is not None and 'total_floors' not in data:
+                        data['total_floors'] = total
+            
+            # Extract amenities
+            amenities = self.extract_amenities(html)
+            if amenities:
+                data['amenities'] = amenities
+            
+            # Extract coordinates
+            lat, lon = self.extract_coordinates(html)
+            if lat and lon:
+                data['latitude'] = lat
+                data['longitude'] = lon
             
             # Get phone numbers from API
             phones = await self.get_phone_numbers(listing_id)
