@@ -199,6 +199,79 @@ class UnvanScraper:
                 
         return None
 
+    def extract_location_info(self, html: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+        """
+        Extract location information like city, district, neighborhood, and metro station
+        
+        Args:
+            html: HTML content of the detail page
+                
+        Returns:
+            Tuple of (city, district, neighborhood, metro_station)
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        city = None
+        district = None
+        neighborhood = None
+        metro_station = None
+        
+        # Find the linkteshow section that contains location links
+        location_elem = soup.select_one('.infop100.linkteshow')
+        if location_elem:
+            # Extract all links with their titles
+            links = location_elem.select('a')
+            for link in links:
+                href = link.get('href', '')
+                title = link.get('title', '')
+                text = link.text.strip()
+                
+                # Categorize based on link/title content
+                if 'rayonu' in href or 'rayonu' in title:
+                    district = text
+                elif 'mikrorayon' in href or 'qesebesi' in href:
+                    neighborhood = text
+                elif 'metrosu' in href or 'metro' in title:
+                    metro_station = text
+                elif href.startswith('/') and len(href.split('-')) == 1:
+                    # Likely a city name (like /baki)
+                    city = text
+                    
+        return city, district, neighborhood, metro_station
+
+    def extract_amenities(self, html: str) -> List[str]:
+        """
+        Extract amenities and location info to add to amenities list
+        
+        Args:
+            html: HTML content of the detail page
+                
+        Returns:
+            List of amenity strings
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        amenities = []
+        
+        # Extract location information
+        city, district, neighborhood, metro = self.extract_location_info(html)
+        
+        # Add location info to amenities
+        if city:
+            amenities.append(f"Şəhər: {city}")
+        if district:
+            amenities.append(f"Rayon: {district}")
+        if neighborhood:
+            amenities.append(f"Qəsəbə: {neighborhood}")
+        if metro:
+            amenities.append(f"Metro: {metro}")
+        
+        # Look for other property features
+        for feature in soup.select('.property_lists li, .features li, .amenities li'):
+            text = feature.text.strip()
+            if text and text not in amenities:
+                amenities.append(text)
+                
+        return amenities
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse the detailed listing page"""
         soup = BeautifulSoup(html, 'lxml')
@@ -209,6 +282,25 @@ class UnvanScraper:
                 'source_website': 'unvan.az',
                 'updated_at': datetime.datetime.now()
             }
+            
+            # Extract address
+            address = self.extract_address(html)
+            if address:
+                data['address'] = address
+                
+            # Extract location information for data fields
+            city, district, neighborhood, metro_station = self.extract_location_info(html)
+            if district:
+                data['district'] = district
+            if metro_station:
+                data['metro_station'] = metro_station
+            if neighborhood:
+                data['location'] = neighborhood
+                
+            # Extract amenities including location info
+            amenities = self.extract_amenities(html)
+            if amenities:
+                data['amenities'] = json.dumps(amenities)
             
             # Extract area
             area_elem = soup.select_one('p:-soup-contains("Sahə")')
@@ -229,10 +321,6 @@ class UnvanScraper:
                 elif 'villa' in prop_type_elem.text.lower():
                     data['property_type'] = 'villa'
             
-            # Extract address directly
-            address = self.extract_address(html)
-            if address:
-                data['address'] = address
             # Extract location info
             location_elem = soup.select_one('.infop100.linkteshow')
             if location_elem:
