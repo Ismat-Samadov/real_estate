@@ -11,7 +11,7 @@ import json
 import time
 
 class VipEmlakScraper:
-    """Scraper for vipemlak.az"""
+    """Scraper for vipemlak.az with enhanced location extraction"""
     
     BASE_URL = "https://vipemlak.az"
     LISTINGS_URL = "https://vipemlak.az/yeni-tikili-satilir/"
@@ -73,14 +73,28 @@ class VipEmlakScraper:
         raise Exception(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
 
     def extract_number(self, text: str) -> Optional[float]:
-        """Extract numeric value from text"""
+        """Extract numeric value from text with improved handling"""
         if not text:
             return None
+            
         try:
+            # Clean the text first by removing non-digit characters except decimal point
+            # Handle both dot and comma as decimal separators
+            clean_text = text.replace(',', '.')
+            
             # Remove everything except digits and decimal point
-            clean_text = re.sub(r'[^\d.]', '', text)
-            return float(clean_text)
-        except (ValueError, TypeError):
+            clean_text = re.sub(r'[^\d.]', '', clean_text)
+            
+            # If we have multiple decimal points, keep only the first one
+            if clean_text.count('.') > 1:
+                parts = clean_text.split('.')
+                clean_text = parts[0] + '.' + ''.join(parts[1:])
+            
+            value = float(clean_text)
+            return value
+            
+        except (ValueError, TypeError) as e:
+            self.logger.debug(f"Failed to extract number from '{text}': {str(e)}")
             return None
 
     async def parse_listing_page(self, html: str) -> List[Dict]:
@@ -151,7 +165,7 @@ class VipEmlakScraper:
         return listings
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page"""
+        """Parse the detailed listing page with enhanced location extraction"""
         soup = BeautifulSoup(html, 'lxml')
         
         try:
@@ -161,59 +175,116 @@ class VipEmlakScraper:
                 'updated_at': datetime.datetime.now()
             }
             
+            # Initialize amenities list at the beginning of the function
+            amenities = []
+            property_details = {}
+            
+            self.logger.info(f"Parsing detail page for listing ID: {listing_id}")
+            
             # Extract main content div
             content_div = soup.select_one('.infotd100')
             if content_div:
-                data['description'] = content_div.text.strip()
+                description_text = content_div.text.strip()
+                data['description'] = description_text
+                
+                # Add description to amenities
+                amenities.append(f"Təsvir: {description_text}")
             
-            # Extract property details
+            # Collect all property details for amenities field
+            amenities = []
+            property_details = {}
+            
+            # Extract property details with enhanced parsing
             for detail_row in soup.select('.infotd'):
-                label = detail_row.text.strip().lower()
+                # Get the label text
+                label_elem = detail_row.find('b')
+                if not label_elem:
+                    continue
+                    
+                label = label_elem.text.strip()
+                label_lower = label.lower()
                 value = detail_row.find_next('.infotd2')
                 if not value:
                     continue
                     
                 value_text = value.text.strip()
+                self.logger.debug(f"Found property detail: {label} = {value_text}")
                 
-                if 'sahə' in label:
-                    area_match = re.search(r'(\d+)\s*m²', value_text)
+                # Store the raw property detail in property_details dictionary
+                property_details[label] = value_text
+                
+                # Add to amenities list in "Label: Value" format
+                amenities.append(f"{label}: {value_text}")
+                
+                # Also extract specific fields for structured database storage
+                if 'sahə' in label_lower:
+                    # Enhanced area extraction
+                    area_match = re.search(r'(\d+(?:\.\d+)?)\s*m[²2]', value_text)
                     if area_match:
-                        data['area'] = float(area_match.group(1))
-                elif 'otaq sayı' in label:
+                        try:
+                            area = float(area_match.group(1))
+                            if 5 <= area <= 10000:  # Reasonable area range check
+                                data['area'] = area
+                                self.logger.info(f"Extracted area: {area} m²")
+                        except (ValueError, TypeError) as e:
+                            self.logger.warning(f"Failed to convert area value: {area_match.group(1)}, error: {str(e)}")
+                elif 'otaq sayı' in label_lower:
                     rooms = self.extract_number(value_text)
                     if rooms:
                         data['rooms'] = int(rooms)
-                elif 'qiymət' in label:
+                elif 'qiymət' in label_lower:
                     price = self.extract_number(value_text)
                     if price:
                         data['price'] = price
                         data['currency'] = 'AZN'
-                elif 'əmlakın növü' in label:
+                elif 'əmlakın növü' in label_lower:
+                    # Enhanced property type extraction
                     property_type = value_text.lower()
+                    
+                    # Store original value
+                    data['property_type_original'] = value_text
+                    
+                    # Map to standardized property types
                     if 'yeni tikili' in property_type:
                         data['property_type'] = 'new'
+                        self.logger.info("Property type identified as 'new'")
                     elif 'köhnə tikili' in property_type:
                         data['property_type'] = 'old'
+                        self.logger.info("Property type identified as 'old'")
+                    elif 'həyət evi' in property_type:
+                        data['property_type'] = 'house'
+                    elif 'villa' in property_type:
+                        data['property_type'] = 'villa'
+                    elif 'ofis' in property_type:
+                        data['property_type'] = 'office'
+                    else:
+                        data['property_type'] = 'apartment'
+                        self.logger.info(f"Unrecognized property type: {property_type}, defaulting to 'apartment'")
             
             # Extract location info
             location_elem = soup.select_one('.infotd100 b:-soup-contains("Ünvan")')
             if location_elem:
                 location_text = location_elem.parent.text
                 
+                # Add address to amenities
+                amenities.append(f"Ünvan: {location_text}")
+                
                 # Extract metro station
                 metro_match = re.search(r'(\w+)\s*metrosu', location_text)
                 if metro_match:
                     data['metro_station'] = metro_match.group(1)
+                    amenities.append(f"Metro: {metro_match.group(1)} metrosu")
                 
                 # Extract district if not already found
                 if not data.get('district'):
                     district_match = re.search(r'(\w+)\s*rayonu', location_text)
                     if district_match:
                         data['district'] = district_match.group(1)
+                        amenities.append(f"Rayon: {district_match.group(1)} rayonu")
                 
                 data['address'] = location_text
             
-            # Extract contact info
+            # Enhanced: Extract location from contact info section
             contact_elem = soup.select_one('.infocontact')
             if contact_elem:
                 # Extract phone number
@@ -225,6 +296,31 @@ class VipEmlakScraper:
                 contact_type_elem = contact_elem.select_one('.glyphicon-user')
                 if contact_type_elem and contact_type_elem.parent:
                     data['contact_type'] = 'agent' if 'vasitəçi' in contact_type_elem.parent.text.lower() else 'owner'
+                
+                # NEW: Extract location from the map marker icon section
+                map_marker = contact_elem.select_one('.glyphicon-map-marker')
+                if map_marker:
+                    # Get the next sibling text which contains the location
+                    location_node = map_marker.next_sibling
+                    if location_node:
+                        location_text = location_node.strip()
+                        # If empty, try to get the full text and parse
+                        if not location_text:
+                            marker_parent = map_marker.parent
+                            if marker_parent:
+                                parent_html = str(marker_parent)
+                                # Find text between map marker and next element
+                                location_match = re.search(r'glyphicon-map-marker.*?>\s*(.*?)<', parent_html, re.DOTALL)
+                                if location_match:
+                                    location_text = location_match.group(1).strip()
+                                else:
+                                    # Alternative approach - get text between span and br
+                                    location_match = re.search(r'glyphicon-map-marker.*?</span>\s*(.*?)<br', parent_html, re.DOTALL)
+                                    if location_match:
+                                        location_text = location_match.group(1).strip()
+                        
+                        if location_text:
+                            data['location'] = location_text
             
             # Extract photos
             photos = []
@@ -248,15 +344,45 @@ class VipEmlakScraper:
                 except (ValueError, AttributeError):
                     pass
             
+            # Extract area from description if not already found
+            if 'area' not in data and data.get('description'):
+                area_match = re.search(r'ümumi sahəsi (\d+(?:\.\d+)?)\s*kv\.?m', data['description'], re.IGNORECASE)
+                if area_match:
+                    try:
+                        area = float(area_match.group(1))
+                        if 5 <= area <= 10000:  # Reasonable area range check
+                            data['area'] = area
+                            self.logger.info(f"Extracted area from description: {area} m²")
+                    except (ValueError, TypeError):
+                        pass
+            
             # Extract floor information from description
-            if data.get('description'):
-                floor_match = re.search(r'(\d+)/(\d+)', data['description'])
+            if ('floor' not in data or 'total_floors' not in data) and data.get('description'):
+                # Look for patterns like "3 cü mərtəbəsində ... 16 mərtəbəli"
+                floor_match = re.search(r'(\d+)[\s-]c[üi]\s+mərtəbə', data['description'], re.IGNORECASE)
+                total_floors_match = re.search(r'(\d+)\s+mərtəbəli', data['description'], re.IGNORECASE)
+                
                 if floor_match:
                     try:
                         data['floor'] = int(floor_match.group(1))
-                        data['total_floors'] = int(floor_match.group(2))
                     except ValueError:
                         pass
+                
+                if total_floors_match:
+                    try:
+                        data['total_floors'] = int(total_floors_match.group(1))
+                    except ValueError:
+                        pass
+                
+                # If both methods fail, try the traditional pattern
+                if 'floor' not in data and 'total_floors' not in data:
+                    floor_match = re.search(r'(\d+)/(\d+)', data['description'])
+                    if floor_match:
+                        try:
+                            data['floor'] = int(floor_match.group(1))
+                            data['total_floors'] = int(floor_match.group(2))
+                        except ValueError:
+                            pass
             
             return data
             
