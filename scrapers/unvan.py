@@ -164,6 +164,41 @@ class UnvanScraper:
                 
         return listings
 
+    def extract_address(self, html: str) -> Optional[str]:
+        """Extract address from HTML
+
+        Args:
+            html: HTML content of the detail page
+                
+        Returns:
+            Address string if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+
+        # Check for address in the "Ünvan:" format in the linkteshow section
+        address_elem = soup.select_one('.infop100.linkteshow')
+        if address_elem:
+            address_text = address_elem.text.strip()
+            # Check for explicit address in format "Ünvan: Something"
+            unvan_match = re.search(r'Ünvan:\s*(.*?)(?:\s*<br>|\s*$)', str(address_elem))
+            if unvan_match:
+                return unvan_match.group(1).strip()
+        
+        # Try alternate method - look for <p> tags containing address information
+        address_p_tags = soup.select('p.infop100')
+        for p_tag in address_p_tags:
+            if 'Ünvan:' in p_tag.text:
+                address = p_tag.text.replace('Ünvan:', '').strip()
+                return address
+                
+        # Additional fallback for other formats
+        address_sections = soup.select('.map-address h4, .address-section, .contact-address')
+        for section in address_sections:
+            if 'Ünvan:' in section.text:
+                return section.text.replace('Ünvan:', '').strip()
+                
+        return None
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse the detailed listing page"""
         soup = BeautifulSoup(html, 'lxml')
@@ -194,6 +229,10 @@ class UnvanScraper:
                 elif 'villa' in prop_type_elem.text.lower():
                     data['property_type'] = 'villa'
             
+            # Extract address directly
+            address = self.extract_address(html)
+            if address:
+                data['address'] = address
             # Extract location info
             location_elem = soup.select_one('.infop100.linkteshow')
             if location_elem:
