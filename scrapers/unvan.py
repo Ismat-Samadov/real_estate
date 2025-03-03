@@ -164,41 +164,6 @@ class UnvanScraper:
                 
         return listings
 
-    def extract_address(self, html: str) -> Optional[str]:
-        """Extract address from HTML
-
-        Args:
-            html: HTML content of the detail page
-                
-        Returns:
-            Address string if found, None otherwise
-        """
-        soup = BeautifulSoup(html, 'lxml')
-
-        # Check for address in the "Ünvan:" format in the linkteshow section
-        address_elem = soup.select_one('.infop100.linkteshow')
-        if address_elem:
-            address_text = address_elem.text.strip()
-            # Check for explicit address in format "Ünvan: Something"
-            unvan_match = re.search(r'Ünvan:\s*(.*?)(?:\s*<br>|\s*$)', str(address_elem))
-            if unvan_match:
-                return unvan_match.group(1).strip()
-        
-        # Try alternate method - look for <p> tags containing address information
-        address_p_tags = soup.select('p.infop100')
-        for p_tag in address_p_tags:
-            if 'Ünvan:' in p_tag.text:
-                address = p_tag.text.replace('Ünvan:', '').strip()
-                return address
-                
-        # Additional fallback for other formats
-        address_sections = soup.select('.map-address h4, .address-section, .contact-address')
-        for section in address_sections:
-            if 'Ünvan:' in section.text:
-                return section.text.replace('Ünvan:', '').strip()
-                
-        return None
-
     def extract_location_info(self, html: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
         Extract location information like city, district, neighborhood, and metro station
@@ -228,15 +193,100 @@ class UnvanScraper:
                 # Categorize based on link/title content
                 if 'rayonu' in href or 'rayonu' in title:
                     district = text
-                elif 'mikrorayon' in href or 'qesebesi' in href:
+                elif any(x in href or x in title for x in ['mikrorayon', 'qesebesi', 'qəsəbəsi', 'massivi']):
                     neighborhood = text
                 elif 'metrosu' in href or 'metro' in title:
                     metro_station = text
-                elif href.startswith('/') and len(href.split('-')) == 1:
+                elif href.startswith('/') and len(href.split('-')) <= 2:
                     # Likely a city name (like /baki)
                     city = text
+        
+        # If no location info was found in links, try parsing the text directly
+        if not (city or district or neighborhood) and location_elem:
+            location_text = location_elem.get_text()
+            
+            # Try to extract from formats like "Bakı Şəhəri, Suraxanı rayonu, Hövsan qəsəbəsi"
+            city_match = re.search(r'(Bakı|Baku)\s*[Şş]əhəri', location_text, re.IGNORECASE)
+            if city_match:
+                city = city_match.group(0)
+                
+            district_match = re.search(r'(\w+)\s*rayonu', location_text, re.IGNORECASE)
+            if district_match:
+                district = district_match.group(1)
+                
+            # Look for common neighborhood identifiers
+            neighborhood_patterns = [
+                r'(\w+)\s*qəsəbəsi',
+                r'(\w+)\s*qesebesi',
+                r'(\w+)\s*qəsəbə',
+                r'(\w+)\s*qesebe',
+                r'(\w+)\s*massivi'
+            ]
+            
+            for pattern in neighborhood_patterns:
+                match = re.search(pattern, location_text, re.IGNORECASE)
+                if match:
+                    neighborhood = match.group(1)
+                    break
                     
         return city, district, neighborhood, metro_station
+
+    def extract_address(self, html: str) -> Optional[str]:
+        """Extract address from HTML with improved handling of various formats
+
+        Args:
+            html: HTML content of the detail page
+                
+        Returns:
+            Address string if found, None otherwise
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Check for address in the "Ünvan:" format in the linkteshow section
+        address_elem = soup.select_one('.infop100.linkteshow')
+        if address_elem:
+            # Find explicit "Ünvan:" text
+            unvan_match = re.search(r'Ünvan:\s*(.*?)(?:\s*<br>|\s*$)', str(address_elem))
+            if unvan_match:
+                return unvan_match.group(1).strip()
+                
+            # If no explicit "Ünvan:" found, try to extract last line after all <a> tags
+            # which often contains the street address
+            links = address_elem.find_all('a')
+            if links:
+                text_chunks = [chunk.strip() for chunk in address_elem.get_text().split('\n')]
+                # Look for text chunks that aren't in any of the link texts
+                link_texts = [link.get_text().strip() for link in links]
+                for chunk in text_chunks:
+                    chunk = chunk.strip()
+                    if chunk and chunk not in link_texts and 'Ünvan:' not in chunk:
+                        # Check if this looks like a street address (not a district or neighborhood)
+                        if not any(x in chunk.lower() for x in ['rayonu', 'qəsəbəsi', 'şəhəri', 'massivi']):
+                            return chunk
+            
+            # Last part may contain address after stripping "Ünvan:" if present
+            address_text = address_elem.get_text().strip()
+            if 'Ünvan:' in address_text:
+                return address_text.split('Ünvan:')[-1].strip()
+        
+        # Try alternate pattern matching for addresses with street names and numbers
+        # Look for common address patterns in the full page text
+        full_text = soup.get_text()
+        address_patterns = [
+            r'(?:Ünvan:|küçəsi|prospekti|bulvarı)[\s:]*([^\n.,]+\d+[^\n.,]*)',  # Street with number
+            r'([A-ZƏÇŞĞİÖÜəçşğıöü][a-zəçşğıöü]+ [A-ZƏÇŞĞİÖÜəçşğıöü][a-zəçşğıöü]+ \d+)',  # Name Name Number format
+            r'([A-ZƏÇŞĞİÖÜəçşğıöü][a-zəçşğıöü]+ \d+)',  # Name Number format
+        ]
+        
+        for pattern in address_patterns:
+            match = re.search(pattern, full_text)
+            if match:
+                address = match.group(1).strip()
+                # Validate it's not just a neighborhood or district
+                if not any(x in address.lower() for x in ['rayonu', 'qəsəbəsi', 'şəhəri']):
+                    return address
+        
+        return None
 
     def extract_amenities(self, html: str) -> List[str]:
         """
