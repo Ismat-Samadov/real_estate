@@ -181,6 +181,74 @@ class VipEmlakScraper:
             
             self.logger.info(f"Parsing detail page for listing ID: {listing_id}")
             
+            # Direct property type extraction from HTML - as a fallback
+            property_type_section = soup.select_one('.infotd:-soup-contains("Əmlakın növü") + .infotd2')
+            if property_type_section:
+                property_type_text = property_type_section.text.strip()
+                property_type_link = property_type_section.find('a')
+                if property_type_link:
+                    property_type_text = property_type_link.text.strip()
+                    
+                self.logger.info(f"Directly extracted property type: {property_type_text}")
+                
+                # Store original value
+                data['property_type_original'] = property_type_text
+                
+                # Map to standardized property types
+                property_type_lower = property_type_text.lower()
+                if 'yeni tikili' in property_type_lower:
+                    data['property_type'] = 'new'
+                    amenities.append(f"Əmlakın növü: {property_type_text}")
+                    self.logger.info("Property type identified as 'new'")
+                elif 'köhnə tikili' in property_type_lower:
+                    data['property_type'] = 'old'
+                    amenities.append(f"Əmlakın növü: {property_type_text}")
+                    self.logger.info("Property type identified as 'old'")
+                    
+            # Direct area extraction from HTML - as a fallback
+            area_section = soup.select_one('.infotd:-soup-contains("Sahə") + .infotd2')
+            if area_section:
+                area_text = area_section.text.strip()
+                self.logger.info(f"Directly extracted area: {area_text}")
+                
+                area_match = re.search(r'(\d+(?:\.\d+)?)\s*m[²2]', area_text)
+                if area_match:
+                    try:
+                        area = float(area_match.group(1))
+                        if 5 <= area <= 10000:  # Reasonable area range check
+                            data['area'] = area
+                            amenities.append(f"Sahə: {area_text}")
+                            self.logger.info(f"Area extracted directly: {area} m²")
+                    except (ValueError, TypeError) as e:
+                        self.logger.warning(f"Failed to convert area value: {area_match.group(1)}, error: {str(e)}")
+                        
+            # Direct room count extraction from HTML - as a fallback
+            rooms_section = soup.select_one('.infotd:-soup-contains("Otaq sayı") + .infotd2')
+            if rooms_section:
+                rooms_text = rooms_section.text.strip()
+                self.logger.info(f"Directly extracted rooms: {rooms_text}")
+                
+                try:
+                    rooms = int(rooms_text)
+                    if 1 <= rooms <= 20:  # Reasonable rooms range check
+                        data['rooms'] = rooms
+                        amenities.append(f"Otaq sayı: {rooms_text}")
+                        self.logger.info(f"Rooms extracted directly: {rooms}")
+                except (ValueError, TypeError) as e:
+                    self.logger.warning(f"Failed to convert rooms value: {rooms_text}, error: {str(e)}")
+            
+            # Direct price extraction from HTML - as a fallback
+            price_section = soup.select_one('.infotd:-soup-contains("Qiymət") + .infotd2')
+            if price_section:
+                price_text = price_section.text.strip()
+                self.logger.info(f"Directly extracted price: {price_text}")
+                
+                price = self.extract_number(price_text)
+                if price:
+                    data['price'] = price
+                    data['currency'] = 'AZN'
+                    amenities.append(f"Qiymət: {price_text}")
+            
             # Extract main content div
             content_div = soup.select_one('.infotd100')
             if content_div:
@@ -190,25 +258,39 @@ class VipEmlakScraper:
                 # Add description to amenities
                 amenities.append(f"Təsvir: {description_text}")
             
-            # Collect all property details for amenities field
-            amenities = []
-            property_details = {}
-            
-            # Extract property details with enhanced parsing
+            # Extract property details with enhanced parsing for different HTML structures
             for detail_row in soup.select('.infotd'):
-                # Get the label text
+                # Get the label text - try different approaches
                 label_elem = detail_row.find('b')
                 if not label_elem:
                     continue
                     
                 label = label_elem.text.strip()
                 label_lower = label.lower()
-                value = detail_row.find_next('.infotd2')
-                if not value:
+                
+                # Find the value - may be in a subsequent div with class infotd2
+                value_div = detail_row.find_next_sibling('.infotd2')
+                if not value_div:
+                    # Try another selector pattern if direct sibling isn't found
+                    value_div = soup.select_one(f'.infotd:contains("{label}") + .infotd2')
+                
+                if not value_div:
+                    self.logger.warning(f"Could not find value for property detail: {label}")
                     continue
+                
+                # Extract text and any links
+                value_text = value_div.text.strip()
+                value_link = value_div.find('a')
+                if value_link:
+                    # If there's a link, get both link text and href
+                    link_text = value_link.text.strip()
+                    link_href = value_link.get('href', '')
+                    value_text = link_text  # Prioritize link text
                     
-                value_text = value.text.strip()
-                self.logger.debug(f"Found property detail: {label} = {value_text}")
+                    # Add link info to property details for reference
+                    property_details[f"{label}_link"] = link_href
+                
+                self.logger.info(f"Found property detail: {label} = {value_text}")
                 
                 # Store the raw property detail in property_details dictionary
                 property_details[label] = value_text
@@ -243,6 +325,7 @@ class VipEmlakScraper:
                     
                     # Store original value
                     data['property_type_original'] = value_text
+                    self.logger.info(f"Original property type: {value_text}")
                     
                     # Map to standardized property types
                     if 'yeni tikili' in property_type:
