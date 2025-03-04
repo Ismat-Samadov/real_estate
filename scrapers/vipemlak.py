@@ -181,6 +181,22 @@ class VipEmlakScraper:
             
             self.logger.info(f"Parsing detail page for listing ID: {listing_id}")
             
+            # Process the main information div content
+            main_info_div = soup.select_one('.halfdiv.openproduct .infotd100')
+            if main_info_div:
+                description_text = main_info_div.text.strip()
+                data['description'] = description_text
+                # Add description to amenities
+                amenities.append(f"Təsvir: {description_text}")
+
+                # Extract features from bullet points in the description
+                bullet_points = main_info_div.select('span.sep')
+                if bullet_points:
+                    for point in bullet_points:
+                        bullet_text = point.next_sibling
+                        if bullet_text and isinstance(bullet_text, str) and bullet_text.strip():
+                            amenities.append(bullet_text.strip())
+            
             # Direct property type extraction from HTML - as a fallback
             property_type_section = soup.select_one('.infotd:-soup-contains("Əmlakın növü") + .infotd2')
             if property_type_section:
@@ -248,15 +264,6 @@ class VipEmlakScraper:
                     data['price'] = price
                     data['currency'] = 'AZN'
                     amenities.append(f"Qiymət: {price_text}")
-            
-            # Extract main content div
-            content_div = soup.select_one('.infotd100')
-            if content_div:
-                description_text = content_div.text.strip()
-                data['description'] = description_text
-                
-                # Add description to amenities
-                amenities.append(f"Təsvir: {description_text}")
             
             # Extract property details with enhanced parsing for different HTML structures
             for detail_row in soup.select('.infotd'):
@@ -357,7 +364,7 @@ class VipEmlakScraper:
                 if metro_match:
                     data['metro_station'] = metro_match.group(1)
                     amenities.append(f"Metro: {metro_match.group(1)} metrosu")
-                
+   
                 # Extract district if not already found
                 if not data.get('district'):
                     district_match = re.search(r'(\w+)\s*rayonu', location_text)
@@ -404,6 +411,7 @@ class VipEmlakScraper:
                         
                         if location_text:
                             data['location'] = location_text
+                            amenities.append(f"Location: {location_text}")
             
             # Extract photos
             photos = []
@@ -426,6 +434,27 @@ class VipEmlakScraper:
                     data['listing_date'] = datetime.datetime.strptime(date_str, '%d.%m.%Y').date()
                 except (ValueError, AttributeError):
                     pass
+            
+            # Extract special features from the description
+            if data.get('description'):
+                desc_lower = data['description'].lower()
+                special_features = []
+                
+                # Look for common features mentioned in the description
+                features_to_check = [
+                    "kombi", "isti pol", "mərkəzi istilik", "kondisioner", 
+                    "lift", "mebel", "təmirli", "əla təmir", "yeni təmir", 
+                    "çıxarış", "kupça", "ipoteka", "kredit"
+                ]
+                
+                for feature in features_to_check:
+                    if feature in desc_lower:
+                        special_features.append(feature)
+                        
+                # Add special features to amenities
+                for feature in special_features:
+                    feature_text = feature.capitalize()
+                    amenities.append(feature_text)
             
             # Extract area from description if not already found
             if 'area' not in data and data.get('description'):
@@ -467,11 +496,17 @@ class VipEmlakScraper:
                         except ValueError:
                             pass
             
+            # Finally, store the amenities in the data dictionary (this was missing in the original)
+            if amenities:
+                data['amenities'] = json.dumps(amenities)
+                self.logger.info(f"Added {len(amenities)} amenities to listing {listing_id}")
+                
             return data
             
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
+
 
     async def run(self, pages: int = 1):
         """Run the scraper for specified number of pages"""
