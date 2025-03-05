@@ -243,8 +243,8 @@ class YeniEmlakScraper:
                     b_elems = param_div.select('b')
                     if len(b_elems) >= 2:
                         try:
-                            data['floor'] = int(b_elems[0].text.strip())
-                            data['total_floors'] = int(b_elems[1].text.strip())
+                            data['floor'] = int(b_elems[1].text.strip())
+                            data['total_floors'] = int(b_elems[0].text.strip())
                         except (ValueError, TypeError, IndexError):
                             pass
                 
