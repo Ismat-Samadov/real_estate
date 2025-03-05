@@ -146,7 +146,7 @@ class YeniEmlakScraper:
         return listings
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page"""
+        """Parse the detailed listing page with improved selectors"""
         soup = BeautifulSoup(html, 'lxml')
         
         try:
@@ -157,77 +157,196 @@ class YeniEmlakScraper:
                 'updated_at': datetime.datetime.now()
             }
             
-            # Extract title and description
-            title = soup.select_one('.title')
-            if title:
-                data['title'] = title.text.strip()
-                
-            description = soup.select_one('.text')
+            # Extract title (using more specific selector)
+            title_elem = soup.select_one('div.title tip')
+            if title_elem:
+                data['title'] = title_elem.text.strip()
+            
+            # Extract description
+            description = soup.select_one('div.text')
             if description:
                 data['description'] = description.text.strip()
             
-            # Extract price
+            # Extract price with improved selector
             price_elem = soup.select_one('price')
             if price_elem:
-                data['price'] = self.extract_number(price_elem.text)
-                data['currency'] = 'AZN'
+                try:
+                    price = float(re.sub(r'[^\d.]', '', price_elem.text))
+                    data['price'] = price
+                    data['currency'] = 'AZN'
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Failed to extract price for listing {listing_id}")
             
-            # Extract location info
-            address_elements = soup.select('.params b')
-            for elem in address_elements:
-                text = elem.text.strip()
-                if 'metro' in text.lower():
-                    data['metro_station'] = text.replace('metro.', '').strip()
-                elif any(district in text.lower() for district in ['rayonu', 'район']):
-                    data['district'] = text.strip()
+            # Extract listing date
+            date_elem = soup.select_one('div.title titem:contains("Tarix:") b')
+            if date_elem:
+                try:
+                    date_str = date_elem.text.strip()
+                    data['listing_date'] = datetime.datetime.strptime(date_str, '%d.%m.%Y').date()
+                except (ValueError, AttributeError):
+                    self.logger.warning(f"Failed to parse listing date: {date_elem.text if date_elem else 'None'}")
             
-            # Extract coordinates
-            lat, lon = self.extract_coordinates(html)
-            if lat and lon:
-                data['latitude'] = lat
-                data['longitude'] = lon
-            
-            # Extract property details
-            property_info = soup.select('.params')
-            for info in property_info:
-                text = info.text.strip()
-                if 'otaq' in text:
-                    data['rooms'] = self.extract_number(text)
-                elif 'm2' in text or 'm²' in text:
-                    data['area'] = self.extract_number(text)
-                elif 'mərtəbə' in text:
-                    floor_info = text.split('/')
-                    if len(floor_info) == 2:
-                        data['floor'] = self.extract_number(floor_info[0])
-                        data['total_floors'] = self.extract_number(floor_info[1])
+            # Extract views count
+            views_elem = soup.select_one('div.title titem:contains("Baxış") b')
+            if views_elem:
+                try:
+                    views_count = int(re.sub(r'[^\d]', '', views_elem.text))
+                    data['views_count'] = views_count
+                except (ValueError, TypeError):
+                    pass
             
             # Extract property type
-            property_type = soup.select_one('emlak')
-            if property_type:
-                if 'bina evi' in property_type.text.lower():
+            property_type_elem = soup.select_one('emlak')
+            if property_type_elem:
+                property_type_text = property_type_elem.text.strip().lower()
+                if 'bina evi' in property_type_text:
                     data['property_type'] = 'apartment'
-                elif 'həyət evi' in property_type.text.lower():
+                elif 'həyət evi' in property_type_text:
                     data['property_type'] = 'house'
+                elif 'villa' in property_type_text:
+                    data['property_type'] = 'villa'
+                elif 'ofis' in property_type_text:
+                    data['property_type'] = 'office'
                 
-            # Extract contact info
-            contact_elem = soup.select_one('.tel img')
-            if contact_elem:
-                data['contact_phone'] = contact_elem.get('src', '').split('/')[-1]
+                # Check for "Yeni tikili" or "Köhnə tikili" in the sibling text
+                if property_type_elem.next_sibling and 'yeni tikili' in property_type_elem.next_sibling.lower():
+                    data['property_type'] = 'new'
+                elif property_type_elem.next_sibling and 'köhnə tikili' in property_type_elem.next_sibling.lower():
+                    data['property_type'] = 'old'
+            
+            # Extract room count, area, floor info with more precise selectors
+            for param_div in soup.select('div.params'):
+                text = param_div.text.strip()
+                
+                # Extract room count
+                if 'otaq' in text.lower():
+                    b_elem = param_div.select_one('b')
+                    if b_elem:
+                        try:
+                            rooms = int(b_elem.text.strip())
+                            data['rooms'] = rooms
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Extract area
+                elif 'm2' in text.lower() or 'm²' in text.lower():
+                    b_elem = param_div.select_one('b')
+                    if b_elem:
+                        try:
+                            area = float(b_elem.text.strip())
+                            data['area'] = area
+                        except (ValueError, TypeError):
+                            pass
+                
+                # Extract floor information
+                elif 'mərtəbə' in text.lower():
+                    b_elems = param_div.select('b')
+                    if len(b_elems) >= 2:
+                        try:
+                            data['floor'] = int(b_elems[0].text.strip())
+                            data['total_floors'] = int(b_elems[1].text.strip())
+                        except (ValueError, TypeError, IndexError):
+                            pass
+                
+                # Extract district
+                elif 'rayonu' in text.lower():
+                    b_elem = param_div.select_one('b')
+                    if b_elem:
+                        data['district'] = b_elem.text.strip()
+                
+                # Extract metro station
+                elif 'metro' in text.lower():
+                    b_elem = param_div.select_one('b')
+                    if b_elem:
+                        data['metro_station'] = b_elem.text.strip()
+                
+                # Extract location/settlement
+                elif 'qəs.' in text.lower():
+                    b_elem = param_div.select_one('b')
+                    if b_elem:
+                        data['location'] = b_elem.text.strip()
+            
+            # Extract full address
+            address_text_elem = soup.select_one('div.params + div.text')
+            if address_text_elem:
+                data['address'] = address_text_elem.text.strip()
+            
+            # Extract contact info and type
+            contact_name = soup.select_one('div.ad')
+            contact_type = soup.select_one('div.elvrn')
+            
+            if contact_name:
+                data['contact_name'] = contact_name.text.strip()
+            
+            if contact_type:
+                contact_type_text = contact_type.text.lower().strip()
+                if 'vasitəçi' in contact_type_text or 'rieltor' in contact_type_text:
+                    data['contact_type'] = 'agent'
+                else:
+                    data['contact_type'] = 'owner'
+            
+            # Extract phone number
+            phone_img = soup.select_one('div.tel img')
+            if phone_img:
+                src = phone_img.get('src')
+                if src:
+                    # Extract phone number from image src (e.g., "/tel-show/0555553908")
+                    phone_match = re.search(r'/tel-show/(\d+)', src)
+                    if phone_match:
+                        data['contact_phone'] = phone_match.group(1)
             
             # Extract amenities
             amenities = []
-            for check in soup.select('.check'):
-                amenities.append(check.text.strip())
+            for check in soup.select('div.check'):
+                if check and check.text.strip():
+                    amenities.append(check.text.strip())
+            
             if amenities:
                 data['amenities'] = json.dumps(amenities)
+                data['has_repair'] = 'Təmirli' in amenities
             
-            # Extract repair status
-            data['has_repair'] = 'Təmirli' in amenities if amenities else False
+            # Extract photos
+            photos = []
+            for img_link in soup.select('a.fancybox-thumb[href]'):
+                href = img_link.get('href')
+                if href and not href.endswith(('load.gif', 'placeholder.png')):
+                    # Ensure absolute URL
+                    if not href.startswith('http'):
+                        href = f"https:{href}" if href.startswith('//') else f"{self.BASE_URL}{href}"
+                    photos.append(href)
+            
+            if photos:
+                data['photos'] = json.dumps(photos)
+            
+            # Extract coordinates (if available)
+            map_iframe = soup.find('iframe', src=lambda x: x and 'google.com/maps' in x)
+            if map_iframe:
+                src = map_iframe.get('src', '')
+                coords_match = re.search(r'q=(-?\d+\.\d+),(-?\d+\.\d+)', src)
+                if coords_match:
+                    try:
+                        data['latitude'] = float(coords_match.group(1))
+                        data['longitude'] = float(coords_match.group(2))
+                    except (ValueError, TypeError):
+                        pass
+            
+            # If no coordinates found via iframe, try extracting from any other map element
+            if 'latitude' not in data:
+                map_div = soup.find('div', id='map')
+                if map_div:
+                    lat_attr = map_div.get('data-lat')
+                    lng_attr = map_div.get('data-lng')
+                    if lat_attr and lng_attr:
+                        try:
+                            data['latitude'] = float(lat_attr)
+                            data['longitude'] = float(lng_attr)
+                        except (ValueError, TypeError):
+                            pass
             
             return data
             
         except Exception as e:
-            self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
+            self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}", exc_info=True)
             raise
 
     async def scrape_listing_type(self, listing_type: str, pages: int = 2) -> List[Dict]:
