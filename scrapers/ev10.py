@@ -284,6 +284,11 @@ class EV10Scraper:
             else:
                 district = listing.get('district')
             
+            # Handle city/location information
+            location = None
+            if listing.get('city'):
+                location = listing.get('city')
+                
             # handle date fields
             created_at = datetime.datetime.now()
             updated_at = None
@@ -349,18 +354,47 @@ class EV10Scraper:
             except (TypeError, ValueError):
                 total_floors = None
 
-            # parse amenities
-            amenities = listing.get('amenities', [])
-            amenities_json = None
+            # FIX #1: DESCRIPTION HANDLING
+            # Ensure description is never null/None - always provide at least an empty string
+            description = ""
+            if listing.get('description') is not None:
+                if isinstance(listing.get('description'), str):
+                    description = listing.get('description').strip()
+                else:
+                    # Convert non-string values to string
+                    description = str(listing.get('description')).strip()
+            
+            self.logger.debug(f"Processed description (length: {len(description)}): {description[:100]}...")
+
+            # FIX #2: AMENITIES HANDLING
+            # Default to empty array JSON string if amenities is None
+            amenities_json = "[]"
+            amenities = listing.get('amenities')
+            
             if amenities:
+                self.logger.debug(f"Raw amenities data: {type(amenities)} = {amenities}")
+                
                 if isinstance(amenities, str):
+                    # It's already a string, check if it's valid JSON
                     try:
-                        amenities = json.loads(amenities)
-                        amenities_json = json.dumps(amenities)
+                        # Valid JSON? Keep it as is
+                        json.loads(amenities)
+                        amenities_json = amenities
+                        self.logger.debug(f"Amenities was already a JSON string: {amenities_json}")
                     except json.JSONDecodeError:
-                        amenities_json = None
+                        # Not valid JSON, make it a JSON array with one item
+                        amenities_json = json.dumps([amenities])
+                        self.logger.debug(f"Amenities string was not valid JSON, converted to array: {amenities_json}")
                 elif isinstance(amenities, list):
+                    # Convert list to JSON string
                     amenities_json = json.dumps(amenities)
+                    self.logger.debug(f"Amenities was a list, converted to JSON string: {amenities_json}")
+                elif isinstance(amenities, dict):
+                    # Convert dict values to JSON array
+                    amenities_json = json.dumps(list(amenities.values()))
+                    self.logger.debug(f"Amenities was a dict, converted to JSON array: {amenities_json}")
+            
+            self.logger.debug(f"Final amenities JSON: {amenities_json}")
 
             # parse images
             photo_urls = []
@@ -404,6 +438,10 @@ class EV10Scraper:
             property_type = listing.get('property_type', 'apartment')
             if not property_type or not isinstance(property_type, str):
                 property_type = 'apartment'
+                
+            # UPDATED: Handle contact type based on is_agent field
+            contact_type = 'agent' if listing.get('is_agent', False) else 'owner'
+            self.logger.debug(f"Set contact_type to {contact_type} based on is_agent: {listing.get('is_agent')}")
             
             # finalize record
             parsed = {
@@ -412,7 +450,7 @@ class EV10Scraper:
                 'metro_station': metro_station,
                 'district': district,
                 'address': listing.get('address', '').strip(),
-                'location': (listing.get('suburban') or '').strip(),
+                'location': location or (listing.get('suburban') or '').strip(),
                 'latitude': lat,
                 'longitude': lon,
                 'rooms': rooms,
@@ -424,18 +462,29 @@ class EV10Scraper:
                 'price': price,
                 'currency': listing.get('currency', 'AZN'),
                 'contact_phone': str(listing.get('phone_number', '')).strip(),
+                'contact_type': contact_type,
                 'whatsapp_available': bool(listing.get('has_whatsapp')),
-                'description': listing.get('description', '').strip(),
+                'description': description,  # FIXED: No more empty descriptions
                 'views_count': max(0, int(listing.get('views_count', 0))),
                 'created_at': created_at,
                 'updated_at': updated_at,
                 'listing_date': listing_date,
                 'has_repair': bool(listing.get('renovated')),
-                'amenities': amenities_json,
+                'amenities': amenities_json,  # FIXED: Always provides at least "[]"
                 'photos': json.dumps(photo_urls) if photo_urls else None,
                 'source_url': urljoin(self.BASE_URL, f"/elan/{listing_id}"),
                 'source_website': 'ev10.az'
             }
+            
+            # Extra validation to ensure critical fields are never null
+            for field in ['description', 'amenities']:
+                if field not in parsed or parsed[field] is None:
+                    if field == 'description':
+                        parsed[field] = ""
+                    elif field == 'amenities':
+                        parsed[field] = "[]"
+                    self.logger.warning(f"Had to set {field} to default value")
+            
             self.logger.debug(f"Successfully parsed listing {listing_id}")
             return parsed
             
