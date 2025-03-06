@@ -353,27 +353,23 @@ class EV10Scraper:
                     total_floors = int(float(total_floors_value))
             except (TypeError, ValueError):
                 total_floors = None
-
-            # IMPROVED: Description handling
+            # For description handling
             description = ""
             if listing.get('description') is not None:
-                # Handle different data types for description
+                # Handle different types for description
                 if isinstance(listing.get('description'), str):
                     description = listing.get('description').strip()
                 else:
-                    # Convert non-string values to string
+                    # Convert non-string values to string safely
                     try:
                         description = str(listing.get('description')).strip()
                     except Exception as e:
                         self.logger.warning(f"Error converting description to string: {e}")
                         description = ""
-            
-            self.logger.debug(f"Processed description (length: {len(description)}): {description[:100]}...")
-
-            # IMPROVED: Amenities handling
+            # For amenities handling
             amenities_json = "[]"  # Default empty array
             amenities = listing.get('amenities')
-            
+
             if amenities:
                 self.logger.debug(f"Raw amenities data: {type(amenities)} = {amenities}")
                 
@@ -408,9 +404,6 @@ class EV10Scraper:
                 except Exception as e:
                     self.logger.warning(f"Error processing amenities: {e}")
                     amenities_json = "[]"  # Fallback to empty array
-            
-            self.logger.debug(f"Final amenities JSON: {amenities_json}")
-
             # parse images
             photo_urls = []
             images = listing.get('images', [])
@@ -485,7 +478,7 @@ class EV10Scraper:
                 'updated_at': updated_at,
                 'listing_date': listing_date,
                 'has_repair': bool(listing.get('renovated')),
-                'amenities': amenities_json,  # IMPROVED: Better handling of amenities
+                'amenities': amenities_json,
                 'photos': json.dumps(photo_urls) if photo_urls else None,
                 'source_url': urljoin(self.BASE_URL, f"/elan/{listing_id}"),
                 'source_website': 'ev10.az'
