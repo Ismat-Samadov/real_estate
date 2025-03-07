@@ -346,7 +346,7 @@ class IpotekaScraper:
                     if phone_number:
                         phones.append(re.sub(r'\\s+', '', phone_number))
                 if phones:
-                    data['contact_phone'] = phones[0]  # Store primary phone number
+                    data['contact_phone'] = phones[0]
             
             # Extract stats (views, dates)
             stats_elem = soup.select_one('.stats')
