@@ -245,7 +245,131 @@ class IpotekaScraper:
                 continue
                 
         return listings
-  
+
+    def extract_metro_station(self, text: str) -> Optional[str]:
+        """
+        Extract metro station name from text using a predefined list of Baku metro stations.
+        
+        Args:
+            text: Text to search for metro station names
+            
+        Returns:
+            Metro station name if found, None otherwise
+        """
+        if not text:
+            return None
+            
+        # Comprehensive list of Baku metro stations (both Azerbaijani and common names)
+        metro_stations = [
+            "20 Yanvar", "20 yanvar",
+            "28 May", "28 may",
+            "8 Noyabr", "8 noyabr",
+            "Azadlıq prospekti", "azadlıq prospekti",
+            "Avtovağzal", "avtovağzal",
+            "Bakmil", "bakmil",
+            "Cəfər Cabbarlı", "cəfər cabbarlı",
+            "Dərnəgül", "dərnəgül",
+            "Elmlər Akademiyası", "elmlər akademiyası",
+            "Əhmədli", "əhmədli",
+            "Gənclik", "gənclik",
+            "Həzi Aslanov", "həzi aslanov",
+            "Xalqlar dostluğu", "xalqlar dostluğu",
+            "İçərişəhər", "içərişəhər",
+            "İnşaatçılar", "inşaatçılar",
+            "Koroğlu", "koroğlu",
+            "Qara Qarayev", "qara qarayev",
+            "Memar Əcəmi", "memar əcəmi",
+            "Nəsimi", "nəsimi",
+            "Nərimanov", "nərimanov",
+            "Neftçilər", "neftçilər",
+            "Nizami", "nizami",
+            "Sahil", "sahil",
+            "Xətai", "xətai",
+            "Xocəsən", "xocəsən",
+            "Ulduz", "ulduz"
+        ]
+        
+        # Convert text to lowercase for case-insensitive matching
+        text_lower = text.lower()
+        
+        # First try exact matches
+        for station in metro_stations:
+            station_lower = station.lower()
+            
+            # Look for the station name with various indicators
+            patterns = [
+                rf'\b{re.escape(station_lower)}\b',  # Exact match
+                rf'\b{re.escape(station_lower)}\s+metro\b',  # Station metro
+                rf'\b{re.escape(station_lower)}\s+m\.\b',  # Station m.
+                rf'metro\s+{re.escape(station_lower)}\b',  # metro Station
+                rf'm\.\s+{re.escape(station_lower)}\b',  # m. Station
+                rf'{re.escape(station_lower)}\s+metrosu\b'  # Station metrosu
+            ]
+            
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    # Return the properly capitalized version
+                    if station.lower() == station:  # If we matched a lowercase version
+                        # Find the corresponding capitalized version
+                        idx = metro_stations.index(station)
+                        if idx % 2 == 1:  # If it's an odd index, get the previous item
+                            return metro_stations[idx - 1]
+                        return station
+                    return station
+        
+        # If no exact match found, try more general patterns
+        general_patterns = [
+            r'\b([A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+(?:\s+[A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+){0,2})\s+metro\s+stansiy',
+            r'\b([A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+(?:\s+[A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+){0,2})\s+metrosu',
+            r'\b([A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+(?:\s+[A-Za-zƏəIıİÖöĞğŞşÇçÜü0-9]+){0,2})\s+m\.'
+        ]
+        
+        for pattern in general_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                candidate = match.group(1).strip()
+                # Check if the candidate is similar to any known station
+                for station in metro_stations:
+                    station_lower = station.lower()
+                    # Check for partial matches or station names without diacritics
+                    if (station_lower in candidate or 
+                        candidate in station_lower or
+                        self._similarity_score(station_lower, candidate) > 0.7):
+                        return station
+        
+        return None
+
+    def _similarity_score(self, s1: str, s2: str) -> float:
+        """
+        Calculate a simple similarity score between two strings.
+        Used to match metro stations with slight spelling variations.
+        
+        Args:
+            s1: First string
+            s2: Second string
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        # Remove diacritics/accents for better matching
+        def remove_diacritics(text):
+            return text.replace('ə', 'e').replace('ı', 'i').replace('ö', 'o').replace('ü', 'u').replace('ğ', 'g').replace('ş', 's').replace('ç', 'c')
+        
+        s1_clean = remove_diacritics(s1)
+        s2_clean = remove_diacritics(s2)
+        
+        # For very short strings, require exact match
+        if len(s1) <= 3 or len(s2) <= 3:
+            return 1.0 if s1_clean == s2_clean else 0.0
+        
+        # Count matching characters
+        matches = sum(c1 == c2 for c1, c2 in zip(s1_clean, s2_clean))
+        
+        # Calculate Jaccard similarity for longer strings
+        if len(s1_clean) > 0 and len(s2_clean) > 0:
+            return matches / max(len(s1_clean), len(s2_clean))
+        return 0.0
+
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
         """Parse the detailed listing page and extract all available information"""
         soup = BeautifulSoup(html, 'lxml')
@@ -265,8 +389,29 @@ class IpotekaScraper:
                 truncated_detail_title = self.safe_truncate(raw_detail_title, self.MAX_TITLE_LENGTH)
                 data['title'] = truncated_detail_title
                 
-                # Parse components from raw_detail_title
+                # Extract clean address from the title - get only the location parts at the end
                 title_parts = [part.strip() for part in raw_detail_title.split(',')]
+                
+                # Extract the address (last 2-3 parts that contain location info)
+                address_parts = []
+                for part in reversed(title_parts):
+                    part_lower = part.lower().strip()
+                    
+                    # If it contains district or location indicators, include it
+                    if ('r.' in part_lower or 
+                        any(loc in part_lower for loc in ['rayon', 'qəs.', 'küç.', 'mkr', 'prospekt']) or
+                        len(address_parts) < 2):  # Always include at least the last two parts
+                        address_parts.insert(0, part.strip())
+                    
+                    # Stop once we've collected enough location parts or hit property description
+                    if len(address_parts) >= 3 and 'otaq' in part_lower:
+                        break
+                
+                # Set the cleaned address
+                if address_parts:
+                    data['address'] = ', '.join(address_parts)
+                
+                # Parse components from raw_detail_title
                 for part in title_parts:
                     part_lower = part.lower().strip()
                     
@@ -274,7 +419,7 @@ class IpotekaScraper:
                     if 'otaq' in part_lower:
                         rooms_match = re.search(r'(\d+)\s*otaq', part_lower)
                         if rooms_match:
-                            data['rooms'] = rooms_match.group(1)
+                            data['rooms'] = int(rooms_match.group(1))
                     
                     # Extract property type
                     if 'yeni tikili' in part_lower:
@@ -293,17 +438,21 @@ class IpotekaScraper:
                     # Extract area
                     area_match = re.search(r'([\d.]+)\s*m²', part)
                     if area_match:
-                        data['area'] = area_match.group(1)
-                        
-                    # Also detect potential metro from the detail title
-                    station_pattern = re.compile(
-                        r'([A-Za-zƏIıİÖöĞğŞşÇçÜü]+(?:\\s+[A-Za-zƏIıİÖöĞğŞşÇçÜü]+)*)'
-                        r'\\s*(?:m/s\\.?|m\\.?|metrosu\\.?|metrosunun|metro)',
-                        re.IGNORECASE
-                    )
-                    station_match = station_pattern.search(part)
-                    if station_match:
-                        data['metro_station'] = station_match.group(1).strip()
+                        try:
+                            data['area'] = float(area_match.group(1))
+                        except (ValueError, TypeError):
+                            pass
+            
+            # Extract description
+            desc_elem = soup.select_one('.desc_block .text p')
+            if desc_elem:
+                description_text = desc_elem.text.strip()
+                data['description'] = description_text
+                
+                # Extract metro station from description
+                metro_station = self.extract_metro_station(description_text)
+                if metro_station:
+                    data['metro_station'] = metro_station
             
             # Extract price
             price_elem = soup.select_one('.desc_block .price')
@@ -316,16 +465,14 @@ class IpotekaScraper:
                 except (ValueError, TypeError):
                     pass
             
-            # Extract description
-            desc_elem = soup.select_one('.desc_block .text p')
-            if desc_elem:
-                data['description'] = desc_elem.text.strip()
-            
             # Extract location info from map
             map_elem = soup.select_one('#map')
             if map_elem:
-                data['latitude'] = map_elem.get('data-lat')
-                data['longitude'] = map_elem.get('data-lng')
+                try:
+                    data['latitude'] = float(map_elem.get('data-lat'))
+                    data['longitude'] = float(map_elem.get('data-lng'))
+                except (ValueError, TypeError, AttributeError):
+                    pass
             
             # Extract contact info
             contact_elem = soup.select_one('.contact .user')
@@ -344,9 +491,9 @@ class IpotekaScraper:
                 for phone in phone_elems:
                     phone_number = phone.get('number') or phone.text.strip()
                     if phone_number:
-                        phones.append(re.sub(r'\\s+', '', phone_number))
+                        phones.append(re.sub(r'\s+', '', phone_number))
                 if phones:
-                    data['contact_phone'] = phones[0]
+                    data['contact_phone'] = phones[0]  # Store primary phone number
             
             # Extract stats (views, dates)
             stats_elem = soup.select_one('.stats')
@@ -373,7 +520,17 @@ class IpotekaScraper:
                         except ValueError:
                             pass
             
-            # Extract property details
+            # Initialize amenities list
+            amenities = []
+            
+            # Extract section titles as categories
+            section_titles = soup.select('.params_block h3.title')
+            for title in section_titles:
+                title_text = title.text.strip()
+                if title_text and title_text not in amenities:
+                    amenities.append(title_text)
+            
+            # Extract property details and amenities
             params_block = soup.select_one('.params_block')
             if params_block:
                 for row in params_block.select('.rw'):
@@ -385,19 +542,33 @@ class IpotekaScraper:
                     label_text = label.text.strip().lower()
                     value_text = value.text.strip()
                     
+                    # Add each property detail to amenities
+                    amenities.append(f"{label.text.strip()}: {value_text}")
+                    
                     if 'sahə' in label_text:
                         area_match = re.search(r'([\d.]+)', value_text)
                         if area_match:
-                            data['area'] = area_match.group(1)
+                            try:
+                                data['area'] = float(area_match.group(1))
+                            except (ValueError, TypeError):
+                                pass
                     elif 'mərtəbə' in label_text:
-                        floor_match = re.search(r'(\\d+)/(\\d+)', value_text)
+                        # Corrected pattern for floor/total_floors
+                        floor_match = re.search(r'(\d+)/(\d+)', value_text)
                         if floor_match:
-                            data['floor'] = int(floor_match.group(1))
-                            data['total_floors'] = int(floor_match.group(2))
+                            try:
+                                # In ipoteka.az, the format is "total_floors/floor"
+                                data['total_floors'] = int(floor_match.group(1))
+                                data['floor'] = int(floor_match.group(2))
+                            except (ValueError, TypeError):
+                                pass
                     elif 'otaq sayı' in label_text:
-                        rooms_match = re.search(r'(\\d+)', value_text)
+                        rooms_match = re.search(r'(\d+)', value_text)
                         if rooms_match:
-                            data['rooms'] = rooms_match.group(1)
+                            try:
+                                data['rooms'] = int(rooms_match.group(1))
+                            except (ValueError, TypeError):
+                                pass
                     elif 'təmir' in label_text:
                         data['has_repair'] = any(
                             x in value_text.lower() for x in ['əla', 'təmirli', 'yaxşı']
@@ -407,9 +578,31 @@ class IpotekaScraper:
                             'çıxarış' in value_text.lower() or 'kupça' in value_text.lower()
                         )
             
+            # Extract additional features/utilities from the page
+            utility_keywords = ['Qaz', 'Su', 'İşıq', 'Kombi', 'Lift', 'Parkinq', 'Eyvan']
+            
+            # Check description for utilities
+            if data.get('description'):
+                desc_lower = data['description'].lower()
+                for keyword in utility_keywords:
+                    keyword_lower = keyword.lower()
+                    if keyword_lower in desc_lower and keyword not in amenities:
+                        amenities.append(keyword)
+            
+            # Check if any additional features are explicitly shown in the page
+            for keyword in utility_keywords:
+                # Look for spans/divs that might indicate features
+                feature_elem = soup.select_one(f'span:-soup-contains("{keyword}"), div:-soup-contains("{keyword}")')
+                if feature_elem and keyword not in amenities:
+                    amenities.append(keyword)
+            
+            # Store amenities in the data dictionary
+            if amenities:
+                data['amenities'] = json.dumps(amenities)
+            
             # Extract photos
             photos = []
-            photo_links = soup.select('a[data-fancybox=\"gallery_ads_view\"]')
+            photo_links = soup.select('a[data-fancybox="gallery_ads_view"]')
             for link in photo_links:
                 href = link.get('href')
                 if href and not href.endswith('load.gif'):
@@ -420,9 +613,14 @@ class IpotekaScraper:
             if photos:
                 data['photos'] = json.dumps(photos)
             
-            # If no address, fall back to truncated title
+            # If no address found so far, use the most relevant parts of the title
             if 'address' not in data and data.get('title'):
-                data['address'] = data['title']
+                title_parts = [part.strip() for part in data['title'].split(',')]
+                relevant_parts = []
+                for part in reversed(title_parts):
+                    if len(relevant_parts) < 2:  # Take the last two parts
+                        relevant_parts.insert(0, part)
+                data['address'] = ', '.join(relevant_parts)
             
             # Default to 'sale'
             data['listing_type'] = 'sale'
@@ -431,13 +629,28 @@ class IpotekaScraper:
             if 'property_type' not in data:
                 data['property_type'] = 'apartment'
             
+            # Extract floor/total floor from description if not already found
+            if ('floor' not in data or 'total_floors' not in data) and data.get('description'):
+                desc_text = data['description']
+                floor_matches = re.search(r'(\d+)/(\d+)[^\d]*mərtəbə', desc_text)
+                if floor_matches:
+                    try:
+                        # In ipoteka.az descriptions as well, the format is "total_floors/floor"
+                        total_floors = int(floor_matches.group(1))
+                        floor = int(floor_matches.group(2))
+                        if 'total_floors' not in data:
+                            data['total_floors'] = total_floors
+                        if 'floor' not in data:
+                            data['floor'] = floor
+                    except (ValueError, TypeError):
+                        pass
+            
             return data
             
         except Exception as e:
-            # self.logger.error(f\"Error parsing listing detail {listing_id}: {str(e)}\")
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
-  
+    
     async def run(self, pages: int = 2):
         """Run the scraper for specified number of pages"""
         try:
