@@ -16,7 +16,6 @@ class IpotekaScraper:
     BASE_URL = "https://ipoteka.az"
     SEARCH_URL = "https://ipoteka.az/search"
     
-    # << ADDED THESE AT CLASS LEVEL >>
     MAX_TITLE_LENGTH = 200
     
     @staticmethod
