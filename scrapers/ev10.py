@@ -353,57 +353,23 @@ class EV10Scraper:
                     total_floors = int(float(total_floors_value))
             except (TypeError, ValueError):
                 total_floors = None
-            # For description handling
-            description = ""
-            if listing.get('description') is not None:
-                # Handle different types for description
-                if isinstance(listing.get('description'), str):
-                    description = listing.get('description').strip()
-                else:
-                    # Convert non-string values to string safely
-                    try:
-                        description = str(listing.get('description')).strip()
-                    except Exception as e:
-                        self.logger.warning(f"Error converting description to string: {e}")
-                        description = ""
-            # For amenities handling
-            amenities_json = "[]"  # Default empty array
-            amenities = listing.get('amenities')
 
-            if amenities:
-                self.logger.debug(f"Raw amenities data: {type(amenities)} = {amenities}")
-                
-                try:
-                    if isinstance(amenities, str):
-                        # It's already a string, check if it's valid JSON
-                        try:
-                            # Validate JSON
-                            json.loads(amenities)
-                            amenities_json = amenities
-                        except json.JSONDecodeError:
-                            # Not valid JSON, make it a JSON array with one item
-                            amenities_json = json.dumps([amenities])
-                    elif isinstance(amenities, list):
-                        # Make sure all items are strings
-                        amenities_list = [str(item) for item in amenities if item is not None]
-                        amenities_json = json.dumps(amenities_list)
-                    elif isinstance(amenities, dict):
-                        # Extract values from dictionary
-                        amenities_list = []
-                        for key, value in amenities.items():
-                            if isinstance(value, str):
-                                amenities_list.append(value)
-                            elif isinstance(value, bool) and value:
-                                amenities_list.append(key)
-                            elif value is not None:
-                                amenities_list.append(str(value))
-                        amenities_json = json.dumps(amenities_list)
-                    else:
-                        # Unknown type, convert to string and put in array
-                        amenities_json = json.dumps([str(amenities)])
-                except Exception as e:
-                    self.logger.warning(f"Error processing amenities: {e}")
-                    amenities_json = "[]"  # Fallback to empty array
+            # Handle description robustly
+            description = listing.get('description', '')
+            if not isinstance(description, str):
+                description = ""
+            else:
+                description = description.strip()
+
+            # Handle amenities explicitly
+            amenities = listing.get('amenities', [])
+            if isinstance(amenities, list):
+                amenities_json = json.dumps([str(amenity).strip().lower() for amenity in amenities if amenity])
+            elif isinstance(amenities, str):
+                amenities_json = json.dumps([amenities.strip().lower()])
+            else:
+                amenities_json = "[]"  # Default to empty list
+
             # parse images
             photo_urls = []
             images = listing.get('images', [])
