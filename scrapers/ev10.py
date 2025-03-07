@@ -57,9 +57,10 @@ class EV10Scraper:
 
     async def close_session(self):
         """Close aiohttp session"""
-        if self.session:
-            await self.session.close()
-            self.session = None
+        if not self.session:
+            return
+        await self.session.close()
+        self.session = None
 
     def get_request_params(self, page: int) -> Dict:
         """Generate request parameters"""
@@ -354,21 +355,34 @@ class EV10Scraper:
             except (TypeError, ValueError):
                 total_floors = None
 
-            # Handle description robustly
-            description = listing.get('description', '')
-            if not isinstance(description, str):
-                description = ""
-            else:
-                description = description.strip()
-
-            # Handle amenities explicitly
-            amenities = listing.get('amenities', [])
-            if isinstance(amenities, list):
-                amenities_json = json.dumps([str(amenity).strip().lower() for amenity in amenities if amenity])
-            elif isinstance(amenities, str):
-                amenities_json = json.dumps([amenities.strip().lower()])
-            else:
-                amenities_json = "[]"  # Default to empty list
+            # Improved description handling
+            description = ""
+            if 'description' in listing and listing['description']:
+                if isinstance(listing['description'], str):
+                    description = listing['description'].strip()
+                    self.logger.debug(f"Extracted description: {description[:100]}...")
+            
+            # Improved amenities handling
+            amenities = []
+            amenities_data = listing.get('amenities', [])
+            if isinstance(amenities_data, list):
+                for amenity in amenities_data:
+                    if amenity and isinstance(amenity, str):
+                        amenities.append(amenity.strip())
+                self.logger.debug(f"Extracted amenities: {amenities}")
+            elif isinstance(amenities_data, str):
+                try:
+                    # Try parsing as JSON string
+                    parsed_amenities = json.loads(amenities_data)
+                    if isinstance(parsed_amenities, list):
+                        amenities = [str(a).strip() for a in parsed_amenities if a]
+                except json.JSONDecodeError:
+                    # If not JSON, treat as a single amenity
+                    if amenities_data.strip():
+                        amenities = [amenities_data.strip()]
+            
+            # Convert amenities to JSON string
+            amenities_json = json.dumps(amenities) if amenities else "[]"
 
             # parse images
             photo_urls = []
@@ -438,7 +452,7 @@ class EV10Scraper:
                 'contact_phone': str(listing.get('phone_number', '')).strip(),
                 'contact_type': contact_type,
                 'whatsapp_available': bool(listing.get('has_whatsapp')),
-                'description': description,  # IMPROVED: Better handling of description
+                'description': description,
                 'views_count': max(0, int(listing.get('views_count', 0))),
                 'created_at': created_at,
                 'updated_at': updated_at,
@@ -524,8 +538,24 @@ class EV10Scraper:
                             if parsed:
                                 listings.append(parsed)
                     else:
-                        # We already have the full data
-                        parsed = self.parse_listing(posting)
+                        # We already have the basic data but need to fetch details for complete info 
+                        # (especially for description and amenities)
+                        posting_id = str(posting.get('id', ''))
+                        if posting_id:
+                            self.logger.debug(f"Fetching additional details for posting ID: {posting_id}")
+                            details = await self.get_listing_details(posting_id)
+                            
+                            if details:
+                                # Merge basic posting data with detailed info, prioritizing details
+                                merged_data = {**posting, **details}
+                                parsed = self.parse_listing(merged_data)
+                            else:
+                                # If details fetch fails, use just the basic data
+                                parsed = self.parse_listing(posting)
+                        else:
+                            # No ID available, just parse what we have
+                            parsed = self.parse_listing(posting)
+                            
                         if parsed:
                             listings.append(parsed)
                 except Exception as e:
