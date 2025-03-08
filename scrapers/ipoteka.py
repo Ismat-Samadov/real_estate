@@ -371,282 +371,286 @@ class IpotekaScraper:
         return 0.0
 
     async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page and extract all available information"""
+        """
+        Parse the detailed listing page to extract all available information,
+        including robust extraction of amenities from the details-page__params section.
+        """
         soup = BeautifulSoup(html, 'lxml')
-        
+
+        data = {
+            'listing_id': listing_id,
+            'source_website': 'lalafo.az',
+            'updated_at': datetime.datetime.now()  # Fallback if no 'updated_at' found
+        }
+
         try:
-            data = {
-                'listing_id': listing_id,
-                'source_website': 'ipoteka.az',
-                'updated_at': datetime.datetime.now()
-            }
-            
-            # Extract title and parse components
-            title_elem = soup.select_one('.desc_block h2.title')
+            #
+            # 1. Title
+            #
+            title_elem = soup.select_one('h1.AdViewContent__title, h1.AdPage__title, h1.LFHeading')
             if title_elem:
-                raw_detail_title = title_elem.text.strip()
-                # Truncate to avoid DB errors
-                truncated_detail_title = self.safe_truncate(raw_detail_title, self.MAX_TITLE_LENGTH)
-                data['title'] = truncated_detail_title
-                
-                # Extract clean address from the title - get only the location parts at the end
-                title_parts = [part.strip() for part in raw_detail_title.split(',')]
-                
-                # Extract the address (last 2-3 parts that contain location info)
-                address_parts = []
-                for part in reversed(title_parts):
-                    part_lower = part.lower().strip()
+                data['title'] = title_elem.text.strip()
+            else:
+                data['title'] = ""
+
+            #
+            # 2. Description
+            #
+            desc_elem = soup.select_one('.AdViewContent__description, .description__wrap, .AdPageBody__description')
+            if desc_elem:
+                data['description'] = desc_elem.text.strip()
+            else:
+                data['description'] = ""
+
+            #
+            # 3. Price
+            #
+            price_elem = soup.select_one(
+                '.AdViewContent__price-current, .AdViewPrice__price-current, '
+                '.price, .ad-detail-price-container p.LFHeading, .AdPage__price'
+            )
+            if price_elem:
+                extracted_price, currency = self.extract_price(price_elem.text)
+                if extracted_price:
+                    data['price'] = extracted_price
+                    data['currency'] = currency
+
+            #
+            # 4. Parse Key-Value fields (param list) - ENHANCED EXTRACTION
+            #
+            amenities = []
+            
+            # Process the details-page__params list items
+            for param_item in soup.select('.details-page__params li'):
+                try:
+                    label = param_item.select_one('p.LFParagraph')
+                    if not label:
+                        continue
                     
-                    # If it contains district or location indicators, include it
-                    if ('r.' in part_lower or 
-                        any(loc in part_lower for loc in ['rayon', 'qəs.', 'küç.', 'mkr', 'prospekt']) or
-                        len(address_parts) < 2):  # Always include at least the last two parts
-                        address_parts.insert(0, part.strip())
+                    label_text = label.text.strip()
+                    label_key = label_text.lower().replace(':', '')
                     
-                    # Stop once we've collected enough location parts or hit property description
-                    if len(address_parts) >= 3 and 'otaq' in part_lower:
-                        break
-                
-                # Set the cleaned address
-                if address_parts:
-                    data['address'] = ', '.join(address_parts)
-                
-                # Parse components from raw_detail_title
-                for part in title_parts:
-                    part_lower = part.lower().strip()
+                    # Get all links (these are usually feature values) or fallback to paragraph text
+                    value_links = param_item.select('a.LFLink')
+                    value_text = ""
                     
-                    # Extract rooms
-                    if 'otaq' in part_lower:
-                        rooms_match = re.search(r'(\d+)\s*otaq', part_lower)
+                    if value_links:
+                        # For multi-value fields (like "Kommunal xətlər"), collect all values
+                        values = [link.text.strip() for link in value_links]
+                        value_text = ', '.join(values)
+                        
+                        # Add each feature to amenities list in format "Label: Value"
+                        if len(values) == 1:
+                            amenities.append(f"{label_text} {values[0]}")
+                        else:
+                            amenities.append(f"{label_text} {value_text}")
+                    else:
+                        # Single value fields using paragraph
+                        value_elem = param_item.select_one('p.LFParagraph:nth-child(2)')
+                        if value_elem:
+                            value_text = value_elem.text.strip()
+                            amenities.append(f"{label_text} {value_text}")
+                    
+                    # Process specific fields based on label
+                    if 'otaqların sayı' in label_key:
+                        rooms_match = re.search(r'(\d+)', value_text)
                         if rooms_match:
                             data['rooms'] = int(rooms_match.group(1))
                     
-                    # Extract property type
-                    if 'yeni tikili' in part_lower:
-                        data['property_type'] = 'new'
-                    elif 'köhnə tikili' in part_lower:
-                        data['property_type'] = 'old'
-                    elif any(x in part_lower for x in ['ev', 'villa', 'həyət']):
-                        data['property_type'] = 'house'
-                    
-                    # Extract district
-                    if 'r.' in part_lower:
-                        district_match = re.search(r'(\w+)\s*r\.', part)
-                        if district_match:
-                            data['district'] = district_match.group(1).title()
-                    
-                    # Extract area
-                    area_match = re.search(r'([\d.]+)\s*m²', part)
-                    if area_match:
-                        try:
-                            data['area'] = float(area_match.group(1))
-                        except (ValueError, TypeError):
-                            pass
-            
-            # Extract description
-            desc_elem = soup.select_one('.desc_block .text p')
-            if desc_elem:
-                description_text = desc_elem.text.strip()
-                data['description'] = description_text
-                
-                # Extract metro station from description
-                metro_station = self.extract_metro_station(description_text)
-                if metro_station:
-                    data['metro_station'] = metro_station
-            
-            # Extract price
-            price_elem = soup.select_one('.desc_block .price')
-            if price_elem:
-                price_text = price_elem.text.strip()
-                try:
-                    price = float(re.sub(r'[^\d.]', '', price_text))
-                    data['price'] = price
-                    data['currency'] = 'AZN'
-                except (ValueError, TypeError):
-                    pass
-            
-            # Extract location info from map
-            map_elem = soup.select_one('#map')
-            if map_elem:
-                try:
-                    data['latitude'] = float(map_elem.get('data-lat'))
-                    data['longitude'] = float(map_elem.get('data-lng'))
-                except (ValueError, TypeError, AttributeError):
-                    pass
-            
-            # Extract contact info
-            contact_elem = soup.select_one('.contact .user')
-            if contact_elem:
-                data['contact_name'] = contact_elem.text.strip()
-                # Determine contact type
-                if 'agent' in contact_elem.text.lower() or 'vasitəçi' in contact_elem.text.lower():
-                    data['contact_type'] = 'agent'
-                else:
-                    data['contact_type'] = 'owner'
-            
-            # Extract phone numbers
-            phone_elems = soup.select('ul.links .active')
-            if phone_elems:
-                phones = []
-                for phone in phone_elems:
-                    phone_number = phone.get('number') or phone.text.strip()
-                    if phone_number:
-                        phones.append(re.sub(r'\s+', '', phone_number))
-                if phones:
-                    data['contact_phone'] = phones[0]  # Store primary phone number
-            
-            # Extract stats (views, dates)
-            stats_elem = soup.select_one('.stats')
-            if stats_elem:
-                for row in stats_elem.select('.rw'):
-                    label = row.select_one('div:first-child')
-                    value = row.select_one('div:last-child')
-                    if not (label and value):
-                        continue
-                    
-                    label_text = label.text.strip().lower()
-                    value_text = value.text.strip()
-                    
-                    if 'yeniləndi' in label_text:
-                        try:
-                            data['listing_date'] = datetime.datetime.strptime(
-                                value_text, '%d.%m.%Y'
-                            ).date()
-                        except ValueError:
-                            pass
-                    elif 'baxış sayı' in label_text:
-                        try:
-                            data['views_count'] = int(value_text)
-                        except ValueError:
-                            pass
-            
-            # Initialize amenities list
-            amenities = []
-            
-            # Extract section titles as categories
-            section_titles = soup.select('.params_block h3.title')
-            for title in section_titles:
-                title_text = title.text.strip()
-                if title_text and title_text not in amenities:
-                    amenities.append(title_text)
-            
-            # Extract property details and amenities
-            params_block = soup.select_one('.params_block')
-            if params_block:
-                for row in params_block.select('.rw'):
-                    label = row.select_one('div:first-child')
-                    value = row.select_one('div:last-child')
-                    if not (label and value):
-                        continue
-                    
-                    label_text = label.text.strip().lower()
-                    value_text = value.text.strip()
-                    
-                    # Add each property detail to amenities
-                    amenities.append(f"{label.text.strip()}: {value_text}")
-                    
-                    if 'sahə' in label_text:
-                        area_match = re.search(r'([\d.]+)', value_text)
+                    elif 'sahə (m2)' in label_key:
+                        area_match = re.search(r'(\d+)', value_text)
                         if area_match:
-                            try:
-                                data['area'] = float(area_match.group(1))
-                            except (ValueError, TypeError):
-                                pass
-                    elif 'mərtəbə' in label_text:
-                        # Corrected pattern for floor/total_floors
-                        floor_match = re.search(r'(\d+)/(\d+)', value_text)
+                            data['area'] = float(area_match.group(1))
+                    
+                    elif 'torpaq sahəsi' in label_key:
+                        land_match = re.search(r'(\d+)', value_text)
+                        if land_match:
+                            data['land_area'] = float(land_match.group(1))
+                    
+                    elif 'mərtəbələrin sayı' in label_key:
+                        floors_match = re.search(r'(\d+)', value_text)
+                        if floors_match:
+                            data['total_floors'] = int(floors_match.group(1))
+                    
+                    elif label_key.startswith('mərtəbə') and 'mərtəbələrin' not in label_key:
+                        floor_match = re.search(r'(\d+)', value_text)
                         if floor_match:
-                            try:
-                                # In ipoteka.az, the format is "total_floors/floor"
-                                data['total_floors'] = int(floor_match.group(1))
-                                data['floor'] = int(floor_match.group(2))
-                            except (ValueError, TypeError):
-                                pass
-                    elif 'otaq sayı' in label_text:
-                        rooms_match = re.search(r'(\d+)', value_text)
-                        if rooms_match:
-                            try:
-                                data['rooms'] = int(rooms_match.group(1))
-                            except (ValueError, TypeError):
-                                pass
-                    elif 'təmir' in label_text:
-                        data['has_repair'] = any(
-                            x in value_text.lower() for x in ['əla', 'təmirli', 'yaxşı']
-                        )
-                    elif 'sənədin tipi' in label_text:
-                        data['has_document'] = (
-                            'çıxarış' in value_text.lower() or 'kupça' in value_text.lower()
-                        )
-            
-            # Extract additional features/utilities from the page
-            utility_keywords = ['Qaz', 'Su', 'İşıq', 'Kombi', 'Lift', 'Parkinq', 'Eyvan']
-            
-            # Check description for utilities
-            if data.get('description'):
-                desc_lower = data['description'].lower()
-                for keyword in utility_keywords:
-                    keyword_lower = keyword.lower()
-                    if keyword_lower in desc_lower and keyword not in amenities:
-                        amenities.append(keyword)
-            
-            # Check if any additional features are explicitly shown in the page
-            for keyword in utility_keywords:
-                # Look for spans/divs that might indicate features
-                feature_elem = soup.select_one(f'span:-soup-contains("{keyword}"), div:-soup-contains("{keyword}")')
-                if feature_elem and keyword not in amenities:
-                    amenities.append(keyword)
-            
-            # Store amenities in the data dictionary
+                            data['floor'] = int(floor_match.group(1))
+                    
+                    elif 'təklifin növü' in label_key:
+                        if value_links and len(value_links) > 0:
+                            value_text = value_links[0].text.strip()
+                        data['contact_type'] = 'agent' if any(x in value_text.lower() for x in ['makler', 'agent']) else 'owner'
+                    
+                    elif 'təmir' in label_key:
+                        data['has_repair'] = True
+                    
+                    elif 'metro stansiyası' in label_key:
+                        metro_name = re.sub(r'^m\.\s*', '', value_text).strip()
+                        data['metro_station'] = metro_name
+                    
+                    elif 'inzibati rayonlar' in label_key:
+                        district = re.sub(r'\s*r\.$', '', value_text).strip()
+                        data['district'] = district
+                    
+                    elif 'sənədlər' in label_key:
+                        if any(x in value_text.lower() for x in ['kupça', 'çıxarış']):
+                            data['has_document'] = True
+                    
+                    elif 'kredit' in label_key:
+                        if 'var' in value_text.lower():
+                            data['has_credit'] = True
+                    
+                    # Special handling for multi-value fields
+                    elif 'kommunal xətlər' in label_key:
+                        if value_links:
+                            utilities = [link.text.strip() for link in value_links]
+                            for utility in utilities:
+                                utility_lower = utility.lower()
+                                if 'qaz' in utility_lower:
+                                    data['has_gas'] = True
+                                elif 'su' in utility_lower:
+                                    data['has_water'] = True
+                                elif 'işıq' in utility_lower:
+                                    data['has_electricity'] = True
+                                elif 'kombi' in utility_lower:
+                                    data['has_heating'] = True
+                                elif 'internet' in utility_lower:
+                                    data['has_internet'] = True
+                    
+                    elif 'evin şəraiti' in label_key:
+                        if value_links:
+                            features = [link.text.strip() for link in value_links]
+                            for feature in features:
+                                feature_lower = feature.lower()
+                                if 'eyvan' in feature_lower or 'balkon' in feature_lower:
+                                    data['has_balcony'] = True
+                                elif 'hasar' in feature_lower:
+                                    data['has_fence'] = True
+                                elif 'kürsülü' in feature_lower:
+                                    data['has_plinth'] = True
+                                elif 'zirzəmi' in feature_lower:
+                                    data['has_basement'] = True
+                    
+                except Exception as e:
+                    self.logger.warning(f"Error parsing parameter item: {str(e)}")
+                    continue
+
+            # Store amenities in data dictionary
             if amenities:
                 data['amenities'] = json.dumps(amenities)
-            
-            # Extract photos
+
+            #
+            # 5. Views Count
+            #
+            impressions_elem = soup.select_one('.impressions span.LFCaption')
+            if impressions_elem:
+                m = re.search(r'Göstərilmə:\s*(\d+)', impressions_elem.text)
+                if m:
+                    data['views_count'] = int(m.group(1))
+
+            #
+            # 6. Creation / Update dates
+            #
+            date_elems = soup.select('.about-ad-info__date')
+            month_map = {
+                'yan': 1, 'fev': 2, 'mar': 3, 'apr': 4, 'may': 5, 'iyn': 6,
+                'iyl': 7, 'avq': 8, 'sen': 9, 'okt': 10, 'noy': 11, 'dek': 12
+            }
+            for elem in date_elems:
+                txt = elem.get_text(strip=True).lower()
+                if 'yaradılma' in txt:  # e.g. "Yaradılma vaxtı: 24 fev 2025"
+                    match = re.search(r'(\d+)\s+(\w+)\s+(\d{4})', txt)
+                    if match:
+                        dd, month_str, yyyy = match.groups()
+                        mm = month_map.get(month_str[:3], 0)
+                        data['listing_date'] = datetime.date(int(yyyy), mm, int(dd))
+                elif 'yenilənmə' in txt:
+                    match = re.search(r'(\d+)\s+(\w+)\s+(\d{4})', txt)
+                    if match:
+                        dd, month_str, yyyy = match.groups()
+                        mm = month_map.get(month_str[:3], 0)
+                        data['updated_at'] = datetime.datetime(int(yyyy), mm, int(dd))
+
+            #
+            # 7. Phone / WhatsApp
+            #
+            phone_wrap = soup.select_one('.PhoneView__number, .phone-wrap')
+            if phone_wrap:
+                phone_text = phone_wrap.get_text(strip=True)
+                data['contact_phone'] = re.sub(r'\s+', '', phone_text)
+
+            whatsapp_elem = soup.select_one('.PhoneView__whatsapp, .whatsapp-icon')
+            data['whatsapp_available'] = 1 if whatsapp_elem else 0
+
+            #
+            # 8. Seller Info
+            #
+            user_name = soup.select_one('.AdViewUser__name, .userName-text')
+            if user_name:
+                data['contact_name'] = user_name.get_text(strip=True)
+                pro_label = soup.select_one('.AdViewUser__pro, .pro-label')
+                if pro_label:
+                    data['contact_type'] = 'agent'
+
+            #
+            # 9. Photos (existing + slick-dots fallback)
+            #
             photos = []
-            photo_links = soup.select('a[data-fancybox="gallery_ads_view"]')
-            for link in photo_links:
-                href = link.get('href')
-                if href and not href.endswith('load.gif'):
-                    if not href.startswith('http'):
-                        href = f"{self.BASE_URL}{href}"
-                    photos.append(href)
-            
+
+            # Existing approach for .AdViewGallery__img-wrap or .carousel__img-wrap
+            picture_elems = soup.select('.AdViewGallery__img-wrap picture, .carousel__img-wrap picture')
+            for pic in picture_elems:
+                source = pic.select_one('source[type="image/webp"]') or pic.select_one('source[type="image/jpeg"]')
+                if source and source.get('srcset'):
+                    src = source.get('srcset')
+                    if src and not src.endswith(('load.gif', 'placeholder.png')):
+                        photos.append(src)
+                else:
+                    img = pic.select_one('img[src]')
+                    if img:
+                        src = img.get('src')
+                        if src and not src.endswith(('load.gif', 'placeholder.png')):
+                            photos.append(src)
+
+            # New approach for slick-dots
+            slick_imgs = soup.select('.slick-dots.slick-thumb li a img[src]')
+            for im in slick_imgs:
+                src = im.get('src', '').strip()
+                if src and not src.endswith(('load.gif', 'placeholder.png')):
+                    photos.append(src)
+
             if photos:
-                data['photos'] = json.dumps(photos)
+                # Deduplicate
+                unique_photos = []
+                for p in photos:
+                    if p not in unique_photos:
+                        unique_photos.append(p)
+                data['photos'] = json.dumps(unique_photos)
+
+            #
+            # 10. Location and address information
+            #
+            # Enhanced extraction of location-related fields
+            data['district'] = self.extract_district(html)
+            data['location'] = self.extract_location(html)
+            lat, lon = self.extract_coordinates(html)
+            if lat is not None and lon is not None:
+                data['latitude'] = lat
+                data['longitude'] = lon
+            data['address'] = self.extract_address(html)
             
-            # If no address found so far, use the most relevant parts of the title
-            if 'address' not in data and data.get('title'):
-                title_parts = [part.strip() for part in data['title'].split(',')]
-                relevant_parts = []
-                for part in reversed(title_parts):
-                    if len(relevant_parts) < 2:  # Take the last two parts
-                        relevant_parts.insert(0, part)
-                data['address'] = ', '.join(relevant_parts)
-            
-            # Default to 'sale'
-            data['listing_type'] = 'sale'
-            
-            # Default property type if not set
+            #
+            # 11. Listing and property type
+            #
+            if 'listing_type' not in data:
+                data['listing_type'] = self.extract_listing_type(data.get('title', '') + ' ' + data.get('description', ''))
+                
             if 'property_type' not in data:
-                data['property_type'] = 'apartment'
-            
-            # Extract floor/total floor from description if not already found
-            if ('floor' not in data or 'total_floors' not in data) and data.get('description'):
-                desc_text = data['description']
-                floor_matches = re.search(r'(\d+)/(\d+)[^\d]*mərtəbə', desc_text)
-                if floor_matches:
-                    try:
-                        # In ipoteka.az descriptions as well, the format is "total_floors/floor"
-                        total_floors = int(floor_matches.group(1))
-                        floor = int(floor_matches.group(2))
-                        if 'total_floors' not in data:
-                            data['total_floors'] = total_floors
-                        if 'floor' not in data:
-                            data['floor'] = floor
-                    except (ValueError, TypeError):
-                        pass
-            
+                data['property_type'] = self.extract_property_type(data.get('title', '') + ' ' + data.get('description', ''))
+
             return data
-            
+
         except Exception as e:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
