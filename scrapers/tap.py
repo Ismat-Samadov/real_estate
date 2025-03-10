@@ -9,6 +9,7 @@ import datetime
 import re
 import json
 import time
+from playwright.async_api import async_playwright
 
 class TapAzScraper:
     """Scraper for tap.az real estate listings"""
@@ -277,102 +278,38 @@ class TapAzScraper:
         if amenities:
             return json.dumps(amenities)
         return None
- 
-    async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        """Fetch phone numbers for a listing using the tap.az API with proper headers"""
-        try:
-            # First, we need to get the detail page to extract CSRF token
-            detail_url = f"https://tap.az/elanlar/dasinmaz-emlak/menziller/{listing_id}"
-            self.logger.info(f"Fetching detail page to extract CSRF token: {detail_url}")
-            
-            # Use the get_page_content method which properly handles the proxy
-            detail_html = await self.get_page_content(detail_url)
-            
-            # Extract CSRF token from meta tag
-            csrf_match = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', detail_html)
-            if not csrf_match:
-                self.logger.warning("Could not find CSRF token in detail page")
-                # Try alternative pattern
-                alt_csrf_match = re.search(r'csrf-token[^>]+content=["\'](.*?)["\']', detail_html)
-                if not alt_csrf_match:
-                    self.logger.error("Failed to extract CSRF token with any pattern")
-                    return []
-                csrf_token = alt_csrf_match.group(1)
-            else:
-                csrf_token = csrf_match.group(1)
-                
-            self.logger.info(f"Found CSRF token: {csrf_token[:10]}...")
-            
-            # Now call the phones API
-            phones_url = f"https://tap.az/ads/{listing_id}/phones"
-            
-            # Prepare headers exactly as seen in browser request
-            headers = {
-                'Accept': '*/*',
-                'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
-                'Content-Length': '0',
-                'DNT': '1',
-                'Origin': 'https://tap.az',
-                'Referer': detail_url,
-                'Sec-Ch-Ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'User-Agent': self.session.headers.get('User-Agent'),
-                'X-Csrf-Token': csrf_token,
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-            
-            # Extract cookies from session to include in the request
-            cookies = {}
-            for cookie in self.session.cookie_jar:
-                cookies[cookie.key] = cookie.value
-            
-            self.logger.info(f"Making phone API request to {phones_url}")
-            
-            # Make a special POST request for the phone numbers
-            # Since get_page_content handles GET requests, we'll use session directly
-            # but will still use the same proxy_url that was set by the proxy handler
-            async with self.session.post(
-                phones_url,
-                headers=headers,
-                cookies=cookies,
-                proxy=self.proxy_url
-            ) as response:
-                if response.status == 200:
-                    try:
-                        response_text = await response.text()
-                        self.logger.debug(f"Phone API response: {response_text[:100]}")
-                        
-                        data = json.loads(response_text)
-                        phones = data.get('phones', [])
-                        
-                        # Clean up phone numbers
-                        cleaned_phones = []
-                        for phone in phones:
-                            # Remove formatting characters
-                            clean_phone = re.sub(r'[\s\(\)\-]', '', phone)
-                            if clean_phone:
-                                cleaned_phones.append(clean_phone)
-                                
-                        self.logger.info(f"Successfully retrieved {len(cleaned_phones)} phone numbers")
-                        return cleaned_phones
-                    except json.JSONDecodeError as e:
-                        self.logger.error(f"Failed to parse phone API response: {str(e)}")
-                        self.logger.debug(f"Raw API response: {await response.text()}")
-                else:
-                    self.logger.warning(f"Phone API returned non-200 status: {response.status}")
-                    error_text = await response.text()
-                    self.logger.warning(f"Error response: {error_text[:200]}")
-            
-            return []
-                
-        except Exception as e:
-            self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
-            return []
-        
+
+    async def get_phone_number_with_browser(self, listing_url: str) -> Optional[str]:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context()
+            page = await context.new_page()
+
+            try:
+                await page.goto(listing_url, timeout=30000)
+                await page.wait_for_selector('#show-phones', timeout=15000)
+                await page.click('#show-phones')
+
+                # Updated and correct selector
+                await page.wait_for_selector('.js-phones li.phone-numbers__i a', timeout=15000)
+                phone_element = await page.query_selector('.js-phones li.phone-numbers__i a')
+
+                if phone_element:
+                    phone_elem = await phone_element.text_content()
+                    if phone_elem:
+                        phone_number = re.sub(r'[^\d+]', '', phone_elem.strip())
+                        return phone_number
+
+            except Exception as e:
+                self.logger.error(f"Error retrieving phone number via browser for {listing_url}: {str(e)}")
+                return None
+
+            finally:
+                await context.close()
+                await browser.close()
+
+        return None
+
     def _is_phone_number(self, text: str) -> bool:
         """Check if a string looks like a phone number"""
         # Remove common formatting characters
@@ -449,7 +386,7 @@ class TapAzScraper:
                 
         return listings
 
-    async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
+    async def parse_listing_detail(self, html: str, listing_id: str, listing_url: str) -> Dict:
         """Parse the detailed listing page and fetch additional data"""
         soup = BeautifulSoup(html, 'lxml')
         
@@ -457,6 +394,7 @@ class TapAzScraper:
             data = {
                 'listing_id': listing_id,
                 'source_website': 'tap.az',
+                'source_url': listing_url,
                 'updated_at': datetime.datetime.now()
             }
             
@@ -581,13 +519,16 @@ class TapAzScraper:
                 data['latitude'] = lat
                 data['longitude'] = lon
             
-            # Get phone numbers from API
-            phones = await self.get_phone_numbers(listing_id)
-            if phones:
-                # Clean up phone number format
-                phone = phones[0].replace('(', '').replace(')', '').replace('-', '').replace(' ', '')
+            # Get phone numbers
+            # phones = await self.get_phone_number_with_browser(listing_id)
+            # if phones:
+            #     # Clean up phone number format
+            #     phone = phones[0].replace('(', '').replace(')', '').replace('-', '').replace(' ', '')
+            #     data['contact_phone'] = phone
+            phone = await self.get_phone_number_with_browser(listing_url)
+            if phone:
                 data['contact_phone'] = phone
-            
+
             # Check WhatsApp availability
             whatsapp_elem = soup.select_one('.wp_status_ico')
             data['whatsapp_available'] = bool(whatsapp_elem)
@@ -650,7 +591,7 @@ class TapAzScraper:
                     for listing in listings:
                         try:
                             detail_html = await self.get_page_content(listing['source_url'])
-                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'], listing['source_url'])
                             all_results.append({**listing, **detail_data})
                         except Exception as e:
                             self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
