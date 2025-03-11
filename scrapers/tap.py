@@ -233,7 +233,186 @@ class TapAzScraper:
                 pass
         
         return None, None
-    
+
+    def extract_district(self, html: str, title: Optional[str] = None, location: Optional[str] = None) -> Optional[str]:
+        """
+        Enhanced district extraction from tap.az listings with multiple fallback approaches.
+        Searches through HTML, title, location, and matches against a list of known Azerbaijan districts.
+        
+        Args:
+            html: HTML content of the listing detail page
+            title: Optional listing title to check
+            location: Optional location text to check
+            
+        Returns:
+            District name if found, None otherwise
+        """
+        # Common Azerbaijan districts (lowercase for case-insensitive matching)
+        azerbaijan_districts = [
+            "ağdam", "ağdaş", "ağcabədi", "ağstafa", "ağsu", "astara", "babək", "balakən", 
+            "bərdə", "beyləqan", "biləsuvar", "cəbrayıl", "cəlilabad", "culfa", "daşkəsən", 
+            "füzuli", "gədəbəy", "goranboy", "göyçay", "göygöl", "hacıqabul", "xaçmaz", 
+            "xızı", "xocalı", "xocavənd", "imişli", "ismayıllı", "kəlbəcər", "kəngərli", 
+            "kürdəmir", "qəbələ", "qax", "qazax", "qobustan", "quba", "qubadlı", "qusar", 
+            "laçın", "lənkəran", "lerik", "masallı", "neftçala", "oğuz", "ordubad", "saatlı", 
+            "sabirabad", "sədərək", "salyan", "samux", "şabran", "şahbuz", "şəki", "şamaxı", 
+            "şəmkir", "şərur", "şuşa", "siyəzən", "tərtər", "tovuz", "ucar", "yardımlı", 
+            "yevlax", "zəngilan", "zaqatala", "zərdab",
+            # Baku districts (most common in real estate listings)
+            "binəqədi", "xətai", "xəzər", "qaradağ", "nərimanov", "nəsimi", "nizami", 
+            "pirallahı", "sabunçu", "səbail", "suraxanı", "yasamal",
+            # Common aliases and variations
+            "absheron", "abşeron", "abseron", "bakı", "baku", "sumqayıt", "sumqayit", "gəncə", "ganja"
+        ]
+        
+        # Create a BeautifulSoup object for HTML parsing
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Method 1: First look for the property location field, which often contains district info
+        for prop in soup.select('.product-properties__i'):
+            label = prop.select_one('.product-properties__i-name')
+            value = prop.select_one('.product-properties__i-value')
+            
+            if not label or not value:
+                continue
+                
+            label_text = label.text.strip().lower()
+            value_text = value.text.strip()
+            
+            # Look for location-related fields
+            if any(keyword in label_text for keyword in ["yerləşmə yeri", "ünvan", "rayon", "ərazi"]):
+                self.logger.debug(f"Found location property: {value_text}")
+                
+                # Try direct district patterns with "rayon" indicator
+                district_patterns = [
+                    r'(\w+)\s*r\.',          # Yasamal r.
+                    r'(\w+)\s*ray\.',        # Yasamal ray.
+                    r'(\w+)\s*rayonu',       # Yasamal rayonu
+                    r'(\w+)\s*rayon'         # Yasamal rayon
+                ]
+                
+                for pattern in district_patterns:
+                    match = re.search(pattern, value_text, re.IGNORECASE)
+                    if match:
+                        district = match.group(1).strip()
+                        self.logger.debug(f"Extracted district using pattern '{pattern}': {district}")
+                        # Validate against known districts
+                        district_lower = district.lower()
+                        if district_lower in azerbaijan_districts:
+                            # Return with proper capitalization
+                            return district[0].upper() + district[1:]
+                
+                # If no rayon pattern, check if the entire value matches a known district
+                for district in azerbaijan_districts:
+                    if district in value_text.lower():
+                        self.logger.debug(f"Matched direct district name: {district}")
+                        # Return with proper capitalization
+                        return district[0].upper() + district[1:]
+        
+        # Method 2: Check address sections for district information
+        address_elems = soup.select('.product-address, .address-section, .product-owner__info-region')
+        for address_elem in address_elems:
+            address_text = address_elem.text.strip()
+            self.logger.debug(f"Checking address element: {address_text}")
+            
+            # Try district patterns
+            district_match = re.search(r'(\w+)\s*(?:r\.|ray\.|rayonu|rayon)', address_text, re.IGNORECASE)
+            if district_match:
+                district = district_match.group(1).strip()
+                district_lower = district.lower()
+                if district_lower in azerbaijan_districts:
+                    self.logger.debug(f"Extracted district from address section: {district}")
+                    return district[0].upper() + district[1:]
+            
+            # Check if the address contains any known district
+            for district in azerbaijan_districts:
+                if district in address_text.lower():
+                    self.logger.debug(f"Found district name in address: {district}")
+                    return district[0].upper() + district[1:]
+        
+        # Method 3: Check title if provided
+        if title:
+            title_lower = title.lower()
+            self.logger.debug(f"Checking title for district: {title}")
+            
+            # Check for district patterns in title
+            district_match = re.search(r'(\w+)\s*(?:r\.|ray\.|rayonu|rayon)', title, re.IGNORECASE)
+            if district_match:
+                district = district_match.group(1).strip()
+                district_lower = district.lower()
+                if district_lower in azerbaijan_districts:
+                    self.logger.debug(f"Extracted district from title: {district}")
+                    return district[0].upper() + district[1:]
+            
+            # Check if title contains any known district
+            for district in azerbaijan_districts:
+                if district in title_lower:
+                    self.logger.debug(f"Found district name in title: {district}")
+                    return district[0].upper() + district[1:]
+        
+        # Method 4: Check location if provided
+        if location:
+            location_lower = location.lower()
+            self.logger.debug(f"Checking location for district: {location}")
+            
+            # Check for district patterns in location
+            district_match = re.search(r'(\w+)\s*(?:r\.|ray\.|rayonu|rayon)', location, re.IGNORECASE)
+            if district_match:
+                district = district_match.group(1).strip()
+                district_lower = district.lower()
+                if district_lower in azerbaijan_districts:
+                    self.logger.debug(f"Extracted district from location: {district}")
+                    return district[0].upper() + district[1:]
+            
+            # Check if location contains any known district
+            for district in azerbaijan_districts:
+                if district in location_lower:
+                    self.logger.debug(f"Found district name in location: {district}")
+                    return district[0].upper() + district[1:]
+        
+        # Method 5: Check description for district mentions
+        desc_elem = soup.select_one('.product-description__content')
+        if desc_elem:
+            desc_text = desc_elem.text.lower()
+            self.logger.debug(f"Checking description for district mentions (first 100 chars): {desc_text[:100]}...")
+            
+            # First try with pattern
+            district_match = re.search(r'(\w+)\s*(?:r\.|ray\.|rayonu|rayon)', desc_text, re.IGNORECASE)
+            if district_match:
+                district = district_match.group(1).strip()
+                district_lower = district.lower()
+                if district_lower in azerbaijan_districts:
+                    self.logger.debug(f"Extracted district from description: {district}")
+                    return district[0].upper() + district[1:]
+            
+            # Then check for direct district mentions
+            for district in azerbaijan_districts:
+                # Look for district with context (to reduce false positives)
+                if f"{district} r" in desc_text or f"{district} ray" in desc_text or f"rayonu {district}" in desc_text:
+                    self.logger.debug(f"Found district with context in description: {district}")
+                    return district[0].upper() + district[1:]
+                
+                # Last resort - direct name match (higher chance of false positives)
+                if district in desc_text:
+                    # Only return if the district name is at least 5 characters to avoid common false positives
+                    if len(district) >= 5:
+                        self.logger.debug(f"Found district name directly in description: {district}")
+                        return district[0].upper() + district[1:]
+        
+        # Method 6: Use breadcrumbs which often contain location hierarchy
+        breadcrumbs = soup.select('.breadcrumb-item a, .breadcrumbs li a')
+        for crumb in breadcrumbs:
+            crumb_text = crumb.text.strip().lower()
+            for district in azerbaijan_districts:
+                if district == crumb_text:  # Exact match to avoid false positives
+                    self.logger.debug(f"Found district in breadcrumb: {district}")
+                    return district[0].upper() + district[1:]
+        
+        # No district found after all attempts
+        self.logger.debug(f"No district found after all extraction attempts")
+        return None
+
+
     def extract_amenities(self, html: str) -> Optional[str]:
         """
         Extract amenities from the listing HTML.
@@ -497,10 +676,19 @@ class TapAzScraper:
                 'updated_at': datetime.datetime.now()
             }
             
+            # Extract title first for district extraction
+            title_elem = soup.select_one('.product-title, .product-header__title, h1.title')
+            title_text = title_elem.text.strip() if title_elem else None
+            if title_text:
+                data['title'] = title_text
+            
             # Extract description
             desc_elem = soup.select_one('.product-description__content')
             if desc_elem:
                 data['description'] = desc_elem.text.strip()
+            
+            # Variable to store location text for district extraction
+            location_text = None
             
             # Extract property details
             for prop in soup.select('.product-properties__i'):
@@ -527,24 +715,7 @@ class TapAzScraper:
                             pass
                 elif 'yerləşmə yeri' in label_text:
                     data['location'] = value_text
-                    # For district, if location contains "qəs." (settlement), extract it as district
-                    if 'qəs.' in value_text:
-                        data['district'] = value_text.replace('qəs.', '').strip()
-                    else:
-                        # Try other district patterns
-                        district_patterns = [
-                            r'(\w+)\s*r\.',  # matches "Yasamal r."
-                            r'(\w+)\s*ray\.',  # matches "Yasamal ray."
-                            r'(\w+)\s*rayonu',  # matches "Yasamal rayonu"
-                            r'(\w+)\s*rayon',   # matches "Yasamal rayon"
-                            r'(\w+)\s*district' # matches "Yasamal district"
-                        ]
-                        
-                        for pattern in district_patterns:
-                            district_match = re.search(pattern, value_text, re.IGNORECASE)
-                            if district_match:
-                                data['district'] = district_match.group(1).strip()
-                                break
+                    location_text = value_text  # Store for district extraction
                     
                     # Try to extract metro station with various patterns
                     metro_patterns = [
@@ -597,6 +768,11 @@ class TapAzScraper:
                     elif 'mənzil' in value_text.lower():
                         data['property_type'] = 'apartment'
             
+            # Apply the enhanced district extraction with title and location context
+            district = self.extract_district(html, title=title_text, location=location_text)
+            if district:
+                data['district'] = district
+                
             # Extract floor information if not already found
             if 'floor' not in data or 'total_floors' not in data:
                 for info_elem in soup.select('.product-properties, .product-description__content'):
