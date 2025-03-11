@@ -663,7 +663,7 @@ class TapAzScraper:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
 
-    async def run(self, pages: int = 2) -> List[Dict]:
+    async def run(self, pages: int = 1) -> List[Dict]:
         """Run the scraper for specified number of pages"""
         try:
             self.logger.info("Starting Tap.az scraper")
