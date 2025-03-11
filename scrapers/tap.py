@@ -412,6 +412,215 @@ class TapAzScraper:
         self.logger.debug(f"No district found after all extraction attempts")
         return None
 
+    def extract_metro_station(self, html: str, title: Optional[str] = None, location: Optional[str] = None) -> Optional[str]:
+        """
+        Enhanced metro station extraction from tap.az listings with multiple fallback approaches.
+        Searches through HTML, title, location, and matches against a list of known Baku metro stations.
+        
+        Args:
+            html: HTML content of the listing detail page
+            title: Optional listing title to check
+            location: Optional location text to check
+            
+        Returns:
+            Metro station name if found, None otherwise
+        """
+        # Comprehensive list of Baku metro stations (both Azerbaijani and common names)
+        metro_stations = [
+            "20 Yanvar", "20 yanvar",
+            "28 May", "28 may",
+            "8 Noyabr", "8 noyabr",
+            "Azadlıq prospekti", "azadlıq prospekti",
+            "Avtovağzal", "avtovağzal",
+            "Bakmil", "bakmil",
+            "Cəfər Cabbarlı", "cəfər cabbarlı",
+            "Dərnəgül", "dərnəgül",
+            "Elmlər Akademiyası", "elmlər akademiyası",
+            "Əhmədli", "əhmədli",
+            "Gənclik", "gənclik",
+            "Həzi Aslanov", "həzi aslanov",
+            "Xalqlar dostluğu", "xalqlar dostluğu",
+            "İçərişəhər", "içərişəhər",
+            "İnşaatçılar", "inşaatçılar",
+            "Koroğlu", "koroğlu",
+            "Qara Qarayev", "qara qarayev",
+            "Memar Əcəmi", "memar əcəmi",
+            "Nəsimi", "nəsimi",
+            "Nərimanov", "nərimanov",
+            "Neftçilər", "neftçilər",
+            "Nizami", "nizami",
+            "Sahil", "sahil",
+            "Xətai", "xətai",
+            "Xocəsən", "xocəsən",
+            "Ulduz", "ulduz"
+        ]
+        
+        # Create a normalized dictionary for proper capitalization
+        metro_normalized = {}
+        for station in metro_stations:
+            metro_normalized[station.lower()] = station
+        
+        # Create a BeautifulSoup object for HTML parsing
+        soup = BeautifulSoup(html, 'lxml')
+        
+        # Method 1: First look for the property location field, which often contains metro info
+        for prop in soup.select('.product-properties__i'):
+            label = prop.select_one('.product-properties__i-name')
+            value = prop.select_one('.product-properties__i-value')
+            
+            if not label or not value:
+                continue
+                
+            label_text = label.text.strip().lower()
+            value_text = value.text.strip()
+            
+            # Look for location-related fields that might contain metro
+            if any(keyword in label_text for keyword in ["yerləşmə yeri", "ünvan", "metro", "location"]):
+                self.logger.debug(f"Found potential metro location property: {value_text}")
+                
+                # Try common metro patterns first
+                metro_patterns = [
+                    r'(\w+)\s*m\.',  # matches "Nizami m."
+                    r'(\w+)\s*metro(?:su)?',  # matches "Nizami metro" or "Nizami metrosu"
+                    r'(\w+)\s*m/st',  # matches "Nizami m/st"
+                    r'(\w+)\s*metro stansiyası',  # matches "Nizami metro stansiyası"
+                    r'm\.\s*(\w+)',  # matches "m. Nizami"
+                    r'metro\s*(\w+)'  # matches "metro Nizami"
+                ]
+                
+                for pattern in metro_patterns:
+                    match = re.search(pattern, value_text, re.IGNORECASE)
+                    if match:
+                        station_name = match.group(1).strip()
+                        self.logger.debug(f"Extracted metro using pattern '{pattern}': {station_name}")
+                        
+                        # Check for exact or partial matches in our known list
+                        station_lower = station_name.lower()
+                        
+                        # Check for exact matches first
+                        if station_lower in metro_normalized:
+                            return metro_normalized[station_lower]
+                        
+                        # Check for partial matches (e.g., "28" might refer to "28 May")
+                        for known_station in metro_normalized:
+                            if station_lower in known_station or known_station in station_lower:
+                                self.logger.debug(f"Matched partial metro station: {known_station}")
+                                return metro_normalized[known_station]
+                
+                # If pattern matching failed, check if the value directly contains any known station
+                value_lower = value_text.lower()
+                for station in metro_normalized:
+                    if station in value_lower:
+                        self.logger.debug(f"Found metro station in value text: {station}")
+                        return metro_normalized[station]
+        
+        # Method 2: Check specific metro sections in the page
+        metro_sections = soup.select('.metro-info, .metro-section, .location-metro')
+        for section in metro_sections:
+            section_text = section.text.strip()
+            self.logger.debug(f"Checking metro section: {section_text}")
+            
+            # Check if the section contains any known metro station
+            section_lower = section_text.lower()
+            for station in metro_normalized:
+                if station in section_lower:
+                    self.logger.debug(f"Found metro name in dedicated section: {station}")
+                    return metro_normalized[station]
+        
+        # Method 3: Check title if provided
+        if title:
+            title_lower = title.lower()
+            self.logger.debug(f"Checking title for metro: {title}")
+            
+            # Try common metro patterns in title
+            for pattern in metro_patterns:
+                match = re.search(pattern, title, re.IGNORECASE)
+                if match:
+                    station_name = match.group(1).strip()
+                    station_lower = station_name.lower()
+                    if station_lower in metro_normalized:
+                        self.logger.debug(f"Extracted metro from title: {station_lower}")
+                        return metro_normalized[station_lower]
+            
+            # Check if title directly contains any known station
+            for station in metro_normalized:
+                if station in title_lower:
+                    self.logger.debug(f"Found metro name in title: {station}")
+                    return metro_normalized[station]
+        
+        # Method 4: Check location if provided
+        if location:
+            location_lower = location.lower()
+            self.logger.debug(f"Checking location for metro: {location}")
+            
+            # Try metro patterns in location
+            for pattern in metro_patterns:
+                match = re.search(pattern, location, re.IGNORECASE)
+                if match:
+                    station_name = match.group(1).strip()
+                    station_lower = station_name.lower()
+                    if station_lower in metro_normalized:
+                        self.logger.debug(f"Extracted metro from location: {station_lower}")
+                        return metro_normalized[station_lower]
+            
+            # Check if location directly contains any known station
+            for station in metro_normalized:
+                if station in location_lower:
+                    self.logger.debug(f"Found metro name in location: {station}")
+                    return metro_normalized[station]
+        
+        # Method 5: Check description for metro mentions
+        desc_elem = soup.select_one('.product-description__content')
+        if desc_elem:
+            desc_text = desc_elem.text.lower()
+            self.logger.debug(f"Checking description for metro mentions (first 100 chars): {desc_text[:100]}...")
+            
+            # Try metro patterns in description
+            for pattern in metro_patterns:
+                match = re.search(pattern, desc_text, re.IGNORECASE)
+                if match:
+                    station_name = match.group(1).strip()
+                    station_lower = station_name.lower()
+                    if station_lower in metro_normalized:
+                        self.logger.debug(f"Extracted metro from description: {station_lower}")
+                        return metro_normalized[station_lower]
+            
+            # Check if description contains any known station with metro context
+            for station in metro_normalized:
+                # First check with context to reduce false positives
+                if f"{station} metro" in desc_text or f"metro {station}" in desc_text or f"m. {station}" in desc_text:
+                    self.logger.debug(f"Found metro with context in description: {station}")
+                    return metro_normalized[station]
+                
+                # Last resort - direct name match for longer station names (less chance of false positives)
+                if station in desc_text and len(station) > 5:
+                    self.logger.debug(f"Found metro name directly in description: {station}")
+                    return metro_normalized[station]
+        
+        # Method 6: Check address section which might contain metro info
+        address_sections = soup.select('.product-address, .address-section')
+        for address in address_sections:
+            address_text = address.text.lower()
+            
+            # Check for metro patterns in address
+            for pattern in metro_patterns:
+                match = re.search(pattern, address_text, re.IGNORECASE)
+                if match:
+                    station_name = match.group(1).strip()
+                    station_lower = station_name.lower()
+                    if station_lower in metro_normalized:
+                        self.logger.debug(f"Extracted metro from address section: {station_lower}")
+                        return metro_normalized[station_lower]
+            
+            # Direct station check in address
+            for station in metro_normalized:
+                if station in address_text:
+                    self.logger.debug(f"Found metro name in address section: {station}")
+                    return metro_normalized[station]
+        
+        # No metro station found after all attempts
+        self.logger.debug("No metro station found after all extraction attempts")
+        return None
 
     def extract_amenities(self, html: str) -> Optional[str]:
         """
