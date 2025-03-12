@@ -417,6 +417,284 @@ class TapAzScraper:
         # Check if it's all digits and has a reasonable length for a phone number
         return clean.isdigit() and 7 <= len(clean) <= 15
 
+    def extract_district(self, html: str) -> Optional[str]:
+        """
+        Extract district information from the listing HTML.
+        Only returns a district if it matches one in the approved Azerbaijan districts list.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            District name if found and validated, None otherwise
+        """
+        # List of valid Azerbaijan districts (lowercased for case-insensitive matching)
+        valid_districts = [
+            "ağdam", "ağdaş", "ağcabədi", "ağstafa", "ağsu", "astara", "babək", "balakən", 
+            "bərdə", "beyləqan", "biləsuvar", "cəbrayıl", "cəlilabad", "culfa", "daşkəsən", 
+            "füzuli", "gədəbəy", "goranboy", "göyçay", "göygöl", "hacıqabul", "xaçmaz", 
+            "xızı", "xocalı", "xocavənd", "imişli", "ismayıllı", "kəlbəcər", "kəngərli", 
+            "kürdəmir", "qəbələ", "qax", "qazax", "qobustan", "quba", "qubadlı", "qusar", 
+            "laçın", "lənkəran", "lerik", "masallı", "neftçala", "oğuz", "ordubad", "saatlı", 
+            "sabirabad", "sədərək", "salyan", "samux", "şabran", "şahbuz", "şəki", "şamaxı", 
+            "şəmkir", "şərur", "şuşa", "siyəzən", "tərtər", "tovuz", "ucar", "yardımlı", 
+            "yevlax", "zəngilan", "zaqatala", "zərdab", "binəqədi", "xətai", "xəzər", 
+            "qaradağ", "nərimanov", "nəsimi", "nizami", "pirallahı", "sabunçu", "səbail", 
+            "suraxanı", "yasamal"
+        ]
+        
+        soup = BeautifulSoup(html, 'lxml')
+        district_candidates = []
+        
+        # First, get all possible location information from the property details
+        city = None
+        location = None
+        
+        # Check product properties
+        for prop in soup.select('.product-properties__i'):
+            label = prop.select_one('.product-properties__i-name')
+            value = prop.select_one('.product-properties__i-value')
+            
+            if not label or not value:
+                continue
+                
+            label_text = label.text.strip().lower()
+            value_text = value.text.strip()
+            
+            if 'şəhər' in label_text:
+                city = value_text
+                district_candidates.append(value_text)
+            elif 'yerləşmə yeri' in label_text:
+                location = value_text
+                district_candidates.append(value_text)
+        
+        # Try to extract from title and description as well
+        title_elem = soup.select_one('h1.product-title')
+        if title_elem:
+            district_candidates.append(title_elem.text.strip())
+        
+        desc_elem = soup.select_one('.product-description__content')
+        if desc_elem:
+            district_candidates.append(desc_elem.text.strip())
+        
+        # Process each candidate location to extract potential district names
+        extracted_districts = []
+        
+        for text in district_candidates:
+            if not text:
+                continue
+                
+            # Try to match district with r. or rayon pattern
+            district_patterns = [
+                r'(\w+)\s*r\.',           # "Xəzər r."
+                r'(\w+)\s*rayonu',        # "Xəzər rayonu"
+                r'(\w+)\s*r-nu',          # "Xəzər r-nu"
+                r'(\w+)\s*rayon'          # "Xəzər rayon"
+            ]
+            
+            for pattern in district_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    district_name = match.group(1).strip().lower()
+                    extracted_districts.append(district_name)
+            
+            # Also check for metro stations that match district names
+            metro_patterns = [
+                r'(\w+)\s*m\.',           # "Nizami m."
+                r'(\w+)\s*metro',         # "Nizami metro"
+                r'(\w+)\s*m/st'           # "Nizami m/st"
+            ]
+            
+            for pattern in metro_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    district_name = match.group(1).strip().lower()
+                    extracted_districts.append(district_name)
+            
+            # Also add raw words that might be districts
+            words = re.split(r'[,\s.;:-]+', text.lower())
+            extracted_districts.extend(words)
+        
+        # Now validate against the list of actual districts
+        for candidate in extracted_districts:
+            candidate = candidate.lower()
+            if candidate in valid_districts:
+                # Return with proper capitalization
+                return candidate.capitalize()
+        
+        # Handle special metro cases that correspond to districts
+        if location:
+            location_lower = location.lower()
+            # Check if it's H.Aslanov which corresponds to Xəzər district
+            if "aslanov" in location_lower:
+                return "Xəzər"
+            # Add more special cases as needed
+        
+        # No valid district found
+        return None
+    
+    def extract_metro_station(self, html: str) -> Optional[str]:
+        """
+        Extract metro station information from the listing HTML.
+        Only returns a metro station if it matches one in the approved Baku metro stations list.
+        
+        Args:
+            html: HTML content of the listing detail page
+            
+        Returns:
+            Metro station name if found and validated, None otherwise
+        """
+        # List of valid Baku metro stations (lowercased for case-insensitive matching)
+        valid_metro_stations = [
+            "20 yanvar", "28 may", "8 noyabr", "azadlıq prospekti", "avtovağzal", 
+            "bakmil", "cəfər cabbarlı", "dərnəgül", "elmlər akademiyası", "əhmədli", 
+            "gənclik", "həzi aslanov", "xalqlar dostluğu", "içərişəhər", "inşaatçılar", 
+            "koroğlu", "qara qarayev", "memar əcəmi", "nəsimi", "nərimanov", 
+            "neftçilər", "nizami", "sahil", "xətai", "xocəsən", "ulduz"
+        ]
+        
+        # Normalized forms for special cases (e.g., shortened versions)
+        normalized_stations = {
+            "20 yanvar": ["20 yanvar", "20yanvar", "yanvar"],
+            "28 may": ["28 may", "28may", "may"],
+            "8 noyabr": ["8 noyabr", "8noyabr", "noyabr"],
+            "həzi aslanov": ["həzi aslanov", "h.aslanov", "aslanov"],
+            "xalqlar dostluğu": ["xalqlar dostluğu", "dostluğu"],
+            "cəfər cabbarlı": ["cəfər cabbarlı", "cabbarlı"],
+            "elmlər akademiyası": ["elmlər akademiyası", "akademiyası"],
+            "memar əcəmi": ["memar əcəmi", "əcəmi"],
+            "qara qarayev": ["qara qarayev", "qarayev"],
+            "azadlıq prospekti": ["azadlıq prospekti", "azadlıq"]
+        }
+        
+        # Mapping for various alternative forms to canonical names
+        metro_mapping = {}
+        for canonical, variations in normalized_stations.items():
+            for variation in variations:
+                metro_mapping[variation] = canonical
+        
+        # For stations not in the mapping, add a direct mapping to themselves
+        for station in valid_metro_stations:
+            if station not in metro_mapping:
+                metro_mapping[station] = station
+        
+        soup = BeautifulSoup(html, 'lxml')
+        metro_candidates = []
+        
+        # First, get all possible location information from the property details
+        location = None
+        
+        # Check product properties
+        for prop in soup.select('.product-properties__i'):
+            label = prop.select_one('.product-properties__i-name')
+            value = prop.select_one('.product-properties__i-value')
+            
+            if not label or not value:
+                continue
+                
+            label_text = label.text.strip().lower()
+            value_text = value.text.strip()
+            
+            if 'yerləşmə yeri' in label_text:
+                location = value_text
+                metro_candidates.append(value_text)
+        
+        # Try to extract from title and description as well
+        title_elem = soup.select_one('h1.product-title')
+        if title_elem:
+            metro_candidates.append(title_elem.text.strip())
+        
+        desc_elem = soup.select_one('.product-description__content')
+        if desc_elem:
+            metro_candidates.append(desc_elem.text.strip())
+        
+        # Process each candidate location to extract potential metro station names
+        extracted_stations = []
+        
+        for text in metro_candidates:
+            if not text:
+                continue
+                
+            # Try to match metro station with m. or metro pattern
+            metro_patterns = [
+                r'(\w+(?:\s+\w+)*)\s*m\.',           # "Nizami m."
+                r'(\w+(?:\s+\w+)*)\s*metro',         # "Nizami metro"
+                r'(\w+(?:\s+\w+)*)\s*m/st',          # "Nizami m/st"
+                r'(\w+(?:\s+\w+)*)\s*metrosu',       # "Nizami metrosu"
+                r'm\.\s*(\w+(?:\s+\w+)*)',           # "m. Nizami"
+                r'metro\s*(\w+(?:\s+\w+)*)',         # "metro Nizami"
+                r'(\w+(?:\s+\w+)*)\s*metro\s+stansiyası'  # "Nizami metro stansiyası"
+            ]
+            
+            for pattern in metro_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    station_name = match.group(1).strip().lower()
+                    extracted_stations.append(station_name)
+                    
+                    # Also try without spaces for compound names (e.g. "20Yanvar")
+                    if ' ' in station_name:
+                        extracted_stations.append(station_name.replace(' ', ''))
+            
+            # Also add raw words that might be metro stations
+            words = re.split(r'[,\s.;:-]+', text.lower())
+            # Only consider words that could be metro stations (e.g., proper names)
+            potential_words = [w for w in words if len(w) > 3 and w[0].isalpha()]
+            extracted_stations.extend(potential_words)
+        
+        # Add special case handling for metro stations commonly formatted with digits
+        for text in metro_candidates:
+            # Special pattern for "20 Yanvar", "28 May", etc.
+            digit_patterns = [
+                r'(\d+)\s*(\w+)',  # "20 Yanvar" or "28 May"
+            ]
+            
+            for pattern in digit_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    digit = match.group(1)
+                    name = match.group(2).lower()
+                    
+                    # Check common date-based metro stations
+                    if digit == "20" and name in ["yanvar", "january"]:
+                        extracted_stations.append("20 yanvar")
+                    elif digit == "28" and name in ["may"]:
+                        extracted_stations.append("28 may")
+                    elif digit == "8" and name in ["noyabr", "november"]:
+                        extracted_stations.append("8 noyabr")
+        
+        # Now validate against the mapping of metro stations
+        for candidate in extracted_stations:
+            # Try to find in metro_mapping (including variations)
+            if candidate in metro_mapping:
+                canonical = metro_mapping[candidate]
+                return canonical.capitalize()
+            
+            # Try partial matching for longer station names
+            for valid_name, canonical in metro_mapping.items():
+                # Check if candidate is a substantial part of a valid station name
+                # Only for longer station names (to avoid false matches with short names)
+                if len(valid_name) > 5 and (valid_name in candidate or candidate in valid_name):
+                    similarity = len(set(valid_name) & set(candidate)) / len(set(valid_name) | set(candidate))
+                    if similarity > 0.7:  # Threshold for similarity
+                        return canonical.capitalize()
+        
+        # Handle special cases from location text
+        if location:
+            location_lower = location.lower()
+            
+            # Special handling for metro stations with abbreviations
+            if "h.aslanov" in location_lower:
+                return "Həzi Aslanov"
+            elif "ə.əcəmi" in location_lower or "m.əcəmi" in location_lower:
+                return "Memar Əcəmi"
+            elif "c.cabbarlı" in location_lower:
+                return "Cəfər Cabbarlı"
+            # Add more special cases as needed
+        
+        # No valid metro station found
+        return None
+    
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
         listings = []
@@ -527,39 +805,7 @@ class TapAzScraper:
                             pass
                 elif 'yerləşmə yeri' in label_text:
                     data['location'] = value_text
-                    # For district, if location contains "qəs." (settlement), extract it as district
-                    if 'qəs.' in value_text:
-                        data['district'] = value_text.replace('qəs.', '').strip()
-                    else:
-                        # Try other district patterns
-                        district_patterns = [
-                            r'(\w+)\s*r\.',  # matches "Yasamal r."
-                            r'(\w+)\s*ray\.',  # matches "Yasamal ray."
-                            r'(\w+)\s*rayonu',  # matches "Yasamal rayonu"
-                            r'(\w+)\s*rayon',   # matches "Yasamal rayon"
-                            r'(\w+)\s*district' # matches "Yasamal district"
-                        ]
-                        
-                        for pattern in district_patterns:
-                            district_match = re.search(pattern, value_text, re.IGNORECASE)
-                            if district_match:
-                                data['district'] = district_match.group(1).strip()
-                                break
                     
-                    # Try to extract metro station with various patterns
-                    metro_patterns = [
-                        r'(\w+)\s*m\.',  # matches "Nizami m."
-                        r'(\w+)\s*metro',  # matches "Nizami metro"
-                        r'(\w+)\s*m/st',  # matches "Nizami m/st"
-                        r'(\w+)\s*metro stansiyası'  # matches "Nizami metro stansiyası"
-                    ]
-                    
-                    for pattern in metro_patterns:
-                        metro_match = re.search(pattern, value_text, re.IGNORECASE)
-                        if metro_match:
-                            data['metro_station'] = metro_match.group(1).strip()
-                            break
-                            
                     # If location contains address-like information, update address field
                     if not any(x in value_text.lower() for x in ['metro', 'rayon', 'district']) and len(value_text) > 5:
                         data['address'] = value_text.strip()
@@ -596,6 +842,16 @@ class TapAzScraper:
                         data['property_type'] = 'house'
                     elif 'mənzil' in value_text.lower():
                         data['property_type'] = 'apartment'
+            
+            # Extract district using the dedicated method that validates against allowed list
+            district = self.extract_district(html)
+            if district:
+                data['district'] = district
+                
+            # Extract metro station using the dedicated method that validates against allowed list
+            metro_station = self.extract_metro_station(html)
+            if metro_station:
+                data['metro_station'] = metro_station
             
             # Extract floor information if not already found
             if 'floor' not in data or 'total_floors' not in data:
