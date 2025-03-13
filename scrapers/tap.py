@@ -682,16 +682,7 @@ class TapAzScraper:
         # Handle special cases from location text
         if location:
             location_lower = location.lower()
-            
-            # # Special handling for metro stations with abbreviations
-            # if "h.aslanov" in location_lower:
-            #     return "Həzi Aslanov"
-            # elif "ə.əcəmi" in location_lower or "m.əcəmi" in location_lower:
-            #     return "Memar Əcəmi"
-            # elif "c.cabbarlı" in location_lower:
-            #     return "Cəfər Cabbarlı"
-            # # Add more special cases as needed
-        
+                    
         # No valid metro station found
         return None
     
