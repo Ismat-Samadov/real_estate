@@ -523,12 +523,12 @@ class TapAzScraper:
                 return candidate.capitalize()
         
         # Handle special metro cases that correspond to districts
-        if location:
-            location_lower = location.lower()
-            # Check if it's H.Aslanov which corresponds to Xəzər district
-            if "aslanov" in location_lower:
-                return "Xəzər"
-            # Add more special cases as needed
+        # if location:
+        #     location_lower = location.lower()
+        #     # Check if it's H.Aslanov which corresponds to Xəzər district
+        #     if "aslanov" in location_lower:
+        #         return "Xəzər"
+        #     # Add more special cases as needed
         
         # No valid district found
         return None
