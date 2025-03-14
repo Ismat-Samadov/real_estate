@@ -278,138 +278,59 @@ class TapAzScraper:
             return json.dumps(amenities)
         return None
 
+    def extract_partial_phone(html: str) -> str:
+        """
+        Extract the partially hidden phone number from tap.az HTML.
+        
+        Args:
+            html: HTML content containing the phone number
+            
+        Returns:
+            Partially visible phone number
+        """
+        import re
+        
+        # Pattern to look for the partially hidden phone number
+        pattern = r'<span>\((\d+)\) (\d+)-(\d+)-●●</span>'
+        match = re.search(pattern, html)
+        
+        if match:
+            area_code = match.group(1)
+            first_part = match.group(2)
+            second_part = match.group(3)
+            
+            # Format the partial number with placeholder
+            partial_number = f"({area_code}) {first_part}-{second_part}-??"
+            return partial_number
+        
+        # Alternative pattern if the first one doesn't match
+        alt_pattern = r'<span>[^<]*\((\d+)\)[^<]*(\d+)[^<]*(\d+)[^<]*●●[^<]*</span>'
+        alt_match = re.search(alt_pattern, html)
+        
+        if alt_match:
+            area_code = alt_match.group(1)
+            first_part = alt_match.group(2)
+            second_part = alt_match.group(3)
+            
+            # Format the partial number with placeholder
+            partial_number = f"({area_code}) {first_part}-{second_part}-??"
+            return partial_number
+            
+        return "No partial phone number found"
+
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        """Fetch phone numbers for a listing using the tap.az API with proper headers and cookies"""
-        try:
-            # First, we need to get the CSRF token from the detail page
-            detail_url = f"https://tap.az/elanlar/dasinmaz-emlak/menziller/{listing_id}"
-            
-            # Get the detail page HTML to extract CSRF token
-            self.logger.info(f"Fetching detail page to extract CSRF token: {detail_url}")
-            
-            # Add specific headers for the detail page request
-            detail_headers = {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
-                'DNT': '1',
-                'Cache-Control': 'max-age=0',
-                'Sec-Ch-Ua': '"Google Chrome";v="133", "Chromium";v="133", "Not_A Brand";v="24"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1',
-                'User-Agent': self.session.headers.get('User-Agent', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
-            }
-            
-            # Make sure to use the proxy for this request too
-            async with self.session.get(
-                detail_url, 
-                headers=detail_headers,
-                proxy=self.proxy_url
-            ) as detail_response:
-                if detail_response.status != 200:
-                    self.logger.warning(f"Failed to get detail page for CSRF token: {detail_response.status}")
-                    return []
-                
-                detail_html = await detail_response.text()
-                
-                # Extract CSRF token from meta tag
-                csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', detail_html)
-                if not csrf_match:
-                    self.logger.warning(f"Could not find CSRF token in detail page")
-                    
-                    # Try alternative pattern if the first one fails
-                    alt_csrf_match = re.search(r'csrf-token content=["\']([^"\']+)["\']', detail_html)
-                    if not alt_csrf_match:
-                        self.logger.error("Failed to extract CSRF token with alternative pattern")
-                        return []
-                    csrf_token = alt_csrf_match.group(1)
-                else:
-                    csrf_token = csrf_match.group(1)
-                    
-                self.logger.info(f"Found CSRF token: {csrf_token[:20]}...")
-                
-                # Now call the phones API with the correct headers and cookies
-                phones_url = f"https://tap.az/ads/{listing_id}/phones"
-                
-                # Create a formatted cookie string from the session cookies
-                cookies = {cookie.key: cookie.value for cookie in self.session.cookie_jar}
-                self.logger.debug(f"Using cookies: {cookies}")
-                
-                # Set up all required headers exactly as seen in the browser request
-                phone_headers = {
-                    ':authority': 'tap.az',
-                    ':method': 'POST',
-                    ':path': f'/ads/{listing_id}/phones',
-                    ':scheme': 'https',
-                    'accept': '*/*',
-                    'accept-encoding': 'gzip, deflate, br, zstd',
-                    'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
-                    'content-length': '0',
-                    'dnt': '1',
-                    'origin': 'https://tap.az',
-                    'priority': 'u=1, i',
-                    'referer': detail_url,
-                    'sec-ch-ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
-                    'sec-ch-ua-mobile': '?0',
-                    'sec-ch-ua-platform': '"macOS"',
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
-                    'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
-                    'x-csrf-token': csrf_token,
-                    'x-requested-with': 'XMLHttpRequest'
-                }
-                
-                # Remove HTTP/2 pseudo-headers that aiohttp doesn't support directly
-                standard_headers = {k: v for k, v in phone_headers.items() if not k.startswith(':')}
-                
-                self.logger.info(f"Making phone request with CSRF token and cookies to {phones_url}")
-                
-                # Empty POST request with CSRF token
-                async with self.session.post(
-                    phones_url,
-                    headers=standard_headers,
-                    cookies=cookies,
-                    proxy=self.proxy_url,
-                    allow_redirects=True
-                ) as response:
-                    if response.status == 200:
-                        try:
-                            response_text = await response.text()
-                            self.logger.debug(f"Raw phone response: {response_text[:200]}")
-                            
-                            data = json.loads(response_text)
-                            phones = data.get('phones', [])
-                            
-                            # Handle potential nested structure of phone data
-                            if not phones and isinstance(data, dict):
-                                # Check other possible paths where phones might be stored
-                                for key, value in data.items():
-                                    if isinstance(value, list) and value and isinstance(value[0], str):
-                                        if any(self._is_phone_number(item) for item in value):
-                                            phones = value
-                                            break
-                            
-                            self.logger.info(f"Successfully retrieved {len(phones)} phone numbers")
-                            return phones
-                        except Exception as e:
-                            self.logger.error(f"Failed to parse phone API response: {str(e)}")
-                            response_text = await response.text()
-                            self.logger.error(f"Raw response: {response_text[:200]}")
-                    else:
-                        self.logger.warning(f"Phone API returned status {response.status}")
-                        response_text = await response.text()
-                        self.logger.warning(f"Error response: {response_text[:200]}")
-                        return []
-                        
-        except Exception as e:
-            self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
-            return []
-    
+        # Try to get full phone numbers using API
+        phones = await self._get_full_phone_numbers(listing_id)
+        
+        # If that fails, fall back to partial number
+        if not phones:
+            detail_html = await self.get_page_content(f"https://tap.az/elanlar/{listing_id}")
+            partial = self.extract_partial_phone_from_page(detail_html)
+            if partial:
+                return [partial]
+        
+        return phones
+
     def _is_phone_number(self, text: str) -> bool:
         """Check if a string looks like a phone number"""
         # Remove common formatting characters
