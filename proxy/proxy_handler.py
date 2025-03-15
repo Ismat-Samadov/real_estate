@@ -4,7 +4,7 @@ import aiohttp
 import asyncio
 import random
 import time
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from dotenv import load_dotenv
 
 class DataImpulseProxyHandler:
@@ -20,11 +20,18 @@ class DataImpulseProxyHandler:
         self.proxy_host = os.getenv('DATAIMPULSE_HOST', 'gw.dataimpulse.com')
         self.proxy_port = os.getenv('DATAIMPULSE_PORT', '823')
         
+        # NEW: Support for multiple proxy zones/countries for rotation
+        self.proxy_countries = os.getenv('DATAIMPULSE_COUNTRIES', 'tr,ge,az').split(',')
+        self.current_country_index = 0
+        
         if not self.username or not self.password:
             raise ValueError("DataImpulse credentials not found in environment variables")
         
-        # Construct proxy URL with authentication
-        self.proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}:{self.proxy_port}"
+        # Generate base proxy URL (without country code)
+        self.base_proxy_url = f"http://{self.username}:{self.password}@{self.proxy_host}:{self.proxy_port}"
+        
+        # Get the current proxy URL with country
+        self.proxy_url = self._get_proxy_url_with_country()
         
         # Rate limiting settings
         self.request_count = 0
@@ -34,6 +41,17 @@ class DataImpulseProxyHandler:
         self.max_request_delay = 3
         self.error_delay = 5
         self.max_errors = 3
+        
+        # Website-specific settings
+        self.site_specific_settings = {
+            'tap.az': {
+                'min_delay': 3,
+                'max_delay': 6,
+                'error_delay': 10,
+                'max_errors': 2,
+                'rotate_on_error': True
+            }
+        }
         
         # Browser fingerprinting
         self.user_agents = [
@@ -56,6 +74,19 @@ class DataImpulseProxyHandler:
             'DNT': '1'
         }
 
+    def _get_proxy_url_with_country(self) -> str:
+        """Get proxy URL with current country code"""
+        country = self.proxy_countries[self.current_country_index]
+        # For DataImpulse, you typically add country code as a parameter
+        # Adjust this based on your provider's requirements
+        return f"{self.base_proxy_url}?country={country}"
+    
+    def _rotate_proxy(self) -> None:
+        """Rotate to the next country in the list"""
+        self.current_country_index = (self.current_country_index + 1) % len(self.proxy_countries)
+        self.proxy_url = self._get_proxy_url_with_country()
+        self.logger.info(f"Rotated proxy to country: {self.proxy_countries[self.current_country_index]}")
+        
     def _get_random_user_agent(self) -> str:
         """Get a random user agent from the list"""
         return random.choice(self.user_agents)
@@ -91,26 +122,50 @@ class DataImpulseProxyHandler:
             trust_env=True
         )
 
-    async def _handle_rate_limiting(self, response: aiohttp.ClientResponse) -> None:
-        """Handle rate limiting with exponential backoff"""
+    def _get_site_settings(self, url: str) -> Dict:
+        """Get site-specific settings based on URL"""
+        for site, settings in self.site_specific_settings.items():
+            if site in url:
+                return settings
+        return {}
+
+    async def _handle_rate_limiting(self, response: aiohttp.ClientResponse, url: str) -> None:
+        """Handle rate limiting with exponential backoff and conditional proxy rotation"""
         self.error_count += 1
-        backoff_time = min(self.error_delay * (2 ** (self.error_count - 1)), 60)
+        
+        # Get site-specific settings if available
+        site_settings = self._get_site_settings(url)
+        error_delay = site_settings.get('error_delay', self.error_delay)
+        max_errors = site_settings.get('max_errors', self.max_errors)
+        rotate_on_error = site_settings.get('rotate_on_error', False)
+        
+        backoff_time = min(error_delay * (2 ** (self.error_count - 1)), 60)
+        
         self.logger.warning(
             f"Rate limited (Status: {response.status}). "
             f"Attempt: {self.error_count}. Waiting {backoff_time}s"
         )
+        
+        # Rotate proxy if site settings specify to do so and we've hit our error threshold
+        if rotate_on_error and self.error_count >= max_errors:
+            self._rotate_proxy()
+            self.error_count = 0
+            self.logger.info(f"Rotated proxy due to rate limiting for {url}")
+        
         await asyncio.sleep(backoff_time)
 
-    async def _wait_between_requests(self) -> None:
-        """Implement intelligent delay between requests"""
+    async def _wait_between_requests(self, url: str) -> None:
+        """Implement intelligent delay between requests with site-specific settings"""
         now = time.time()
         time_since_last = now - self.last_request_time
         
-        if time_since_last < self.min_request_delay:
-            delay = random.uniform(
-                self.min_request_delay,
-                self.max_request_delay
-            )
+        # Get site-specific settings if available
+        site_settings = self._get_site_settings(url)
+        min_delay = site_settings.get('min_delay', self.min_request_delay)
+        max_delay = site_settings.get('max_delay', self.max_request_delay)
+        
+        if time_since_last < min_delay:
+            delay = random.uniform(min_delay, max_delay)
             await asyncio.sleep(delay - time_since_last)
         
         self.last_request_time = time.time()
@@ -118,15 +173,24 @@ class DataImpulseProxyHandler:
     def apply_to_scraper(self, scraper_instance) -> None:
         """Apply proxy configuration to a scraper instance"""
         scraper_instance.proxy_url = self.proxy_url
-        self.logger.info(f"Applied proxy URL to {scraper_instance.__class__.__name__}")
+        self.logger.info(f"Applied proxy URL to {scraper_instance.__class__.__name__}: {self.proxy_url}")
+        
+        # Keep reference to the original scraper class name for site-specific handling
+        scraper_class_name = scraper_instance.__class__.__name__
+        
+        # Store reference to the proxy handler in the scraper instance
+        scraper_instance.proxy_handler = self
         
         async def new_get_page_content(url: str, params: Optional[dict] = None) -> str:
             max_retries = 3
             last_error = None
             
+            # Handle tap.az with special care
+            is_tap_scraper = 'TapAzScraper' in scraper_class_name
+            
             for attempt in range(max_retries):
                 try:
-                    await self._wait_between_requests()
+                    await self._wait_between_requests(url)
                     
                     headers = {
                         'Referer': url,
@@ -142,12 +206,24 @@ class DataImpulseProxyHandler:
                         'session_id': f'{random.randbytes(16).hex()}'
                     }
                     
+                    # If it's a TapAzScraper, add more specialized cookies
+                    if is_tap_scraper:
+                        cookies.update({
+                            'tapcsrf': f'{random.randbytes(16).hex()}',
+                            'tapsessid': f'{random.randbytes(16).hex()}',
+                            'visitor_id': f'{random.randint(10000000, 99999999)}',
+                            'referer': 'https://tap.az/elanlar/dasinmaz-emlak'
+                        })
+                    
+                    # Make sure we're using the current proxy_url (which might have been rotated)
+                    current_proxy_url = self.proxy_url
+                    
                     async with scraper_instance.session.get(
                         url,
                         params=params,
                         headers={**scraper_instance.session.headers, **headers},
                         cookies=cookies,
-                        proxy=self.proxy_url,
+                        proxy=current_proxy_url,
                         timeout=30,
                         allow_redirects=True,
                         verify_ssl=False
@@ -156,7 +232,14 @@ class DataImpulseProxyHandler:
                             self.error_count = 0
                             return await response.text()
                         elif response.status in [403, 429, 502, 503]:
-                            await self._handle_rate_limiting(response)
+                            await self._handle_rate_limiting(response, url)
+                            if is_tap_scraper and self.error_count >= 2:
+                                # For tap.az, rotate proxy more aggressively
+                                self._rotate_proxy()
+                                # Update scraper's proxy_url to match the rotated one
+                                scraper_instance.proxy_url = self.proxy_url
+                                self.error_count = 0
+                            
                             if self.error_count >= self.max_errors:
                                 await scraper_instance.session.close()
                                 scraper_instance.session = await self.create_session()
@@ -168,6 +251,10 @@ class DataImpulseProxyHandler:
                 except asyncio.TimeoutError:
                     last_error = "Timeout"
                     await asyncio.sleep(random.uniform(2, 5))
+                    # Rotate proxy on timeout for tap.az
+                    if is_tap_scraper:
+                        self._rotate_proxy()
+                        scraper_instance.proxy_url = self.proxy_url
                 except Exception as e:
                     last_error = str(e)
                     if attempt == max_retries - 1:
@@ -178,6 +265,38 @@ class DataImpulseProxyHandler:
         
         # Replace the get_page_content method
         scraper_instance.get_page_content = new_get_page_content
+        
+        # For TapAzScraper, enhance the get_phone_numbers method if it exists
+        if hasattr(scraper_instance, 'get_phone_numbers'):
+            original_get_phone_numbers = scraper_instance.get_phone_numbers
+            
+            async def enhanced_get_phone_numbers(listing_id: str) -> List[str]:
+                """Enhanced phone number fetching with proxy rotation support"""
+                try:
+                    # Try the original method first
+                    phones = await original_get_phone_numbers(listing_id)
+                    
+                    # If successful, return the phones
+                    if phones:
+                        return phones
+                    
+                    # If not successful, try rotating the proxy and trying again
+                    self._rotate_proxy()
+                    scraper_instance.proxy_url = self.proxy_url
+                    self.logger.info(f"Rotated proxy for phone API to: {self.proxy_url}")
+                    
+                    # Wait before retry
+                    await asyncio.sleep(random.uniform(3, 5))
+                    
+                    # Try again with new proxy
+                    return await original_get_phone_numbers(listing_id)
+                except Exception as e:
+                    self.logger.error(f"Error in enhanced_get_phone_numbers: {str(e)}")
+                    return []
+            
+            # Replace the get_phone_numbers method only for TapAzScraper
+            if 'TapAzScraper' in scraper_class_name:
+                scraper_instance.get_phone_numbers = enhanced_get_phone_numbers
         
         async def new_init_session():
             if not hasattr(scraper_instance, 'session') or not scraper_instance.session:
