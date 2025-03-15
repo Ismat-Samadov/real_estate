@@ -278,66 +278,6 @@ class TapAzScraper:
             return json.dumps(amenities)
         return None
 
-    def extract_partial_phone(html: str) -> str:
-        """
-        Extract the partially hidden phone number from tap.az HTML.
-        
-        Args:
-            html: HTML content containing the phone number
-            
-        Returns:
-            Partially visible phone number
-        """
-        import re
-        
-        # Pattern to look for the partially hidden phone number
-        pattern = r'<span>\((\d+)\) (\d+)-(\d+)-●●</span>'
-        match = re.search(pattern, html)
-        
-        if match:
-            area_code = match.group(1)
-            first_part = match.group(2)
-            second_part = match.group(3)
-            
-            # Format the partial number with placeholder
-            partial_number = f"({area_code}) {first_part}-{second_part}-??"
-            return partial_number
-        
-        # Alternative pattern if the first one doesn't match
-        alt_pattern = r'<span>[^<]*\((\d+)\)[^<]*(\d+)[^<]*(\d+)[^<]*●●[^<]*</span>'
-        alt_match = re.search(alt_pattern, html)
-        
-        if alt_match:
-            area_code = alt_match.group(1)
-            first_part = alt_match.group(2)
-            second_part = alt_match.group(3)
-            
-            # Format the partial number with placeholder
-            partial_number = f"({area_code}) {first_part}-{second_part}-??"
-            return partial_number
-            
-        return "No partial phone number found"
-
-    async def get_phone_numbers(self, listing_id: str) -> List[str]:
-        # Try to get full phone numbers using API
-        phones = await self._get_full_phone_numbers(listing_id)
-        
-        # If that fails, fall back to partial number
-        if not phones:
-            detail_html = await self.get_page_content(f"https://tap.az/elanlar/{listing_id}")
-            partial = self.extract_partial_phone_from_page(detail_html)
-            if partial:
-                return [partial]
-        
-        return phones
-
-    def _is_phone_number(self, text: str) -> bool:
-        """Check if a string looks like a phone number"""
-        # Remove common formatting characters
-        clean = re.sub(r'[\s\-\(\)\+]', '', text)
-        # Check if it's all digits and has a reasonable length for a phone number
-        return clean.isdigit() and 7 <= len(clean) <= 15
-
     def extract_district(self, html: str) -> Optional[str]:
         """
         Extract district information from the listing HTML.
@@ -606,6 +546,154 @@ class TapAzScraper:
                     
         # No valid metro station found
         return None
+
+    async def get_phone_numbers(self, listing_id: str) -> List[str]:
+        """
+        Fetch phone numbers from tap.az API with enhanced headers and session management.
+        Ensures proxy is used for all requests.
+        """
+        try:
+            # Debug proxy setup
+            self.logger.info(f"Using proxy for phone number fetch: {self.proxy_url}")
+            
+            # Construct the proper API URL
+            url = f"https://tap.az/ads/{listing_id}/phones"
+            
+            # First visit the actual listing page to get cookies and tokens
+            listing_url = f"https://tap.az/elanlar/dasinmaz-emlak/{listing_id}"
+            
+            self.logger.info(f"Fetching listing page to get cookies: {listing_url}")
+            
+            # Make sure we have a session
+            if not self.session:
+                await self.init_session()
+            
+            # First get the listing page to get cookies - EXPLICITLY USE PROXY
+            async with self.session.get(
+                listing_url,
+                proxy=self.proxy_url,  # Explicitly use proxy
+                allow_redirects=True,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
+                    'Referer': 'https://tap.az/',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1'
+                }
+            ) as response:
+                self.logger.info(f"Listing page response status: {response.status}")
+                
+                if response.status != 200:
+                    self.logger.warning(f"Failed to fetch listing page: {response.status}")
+                    return []
+                
+                # Store cookies from the listing page
+                cookies = response.cookies
+                
+                # Get the HTML content to extract any CSRF token if needed
+                html_content = await response.text()
+                
+                # Try to extract CSRF token - both standard and custom formats
+                csrf_token = None
+                for pattern in [
+                    r'meta\s+name="csrf-token"\s+content="([^"]+)"',  # Standard format
+                    r'<input[^>]*name="_csrf[^"]*"[^>]*value="([^"]+)"',  # Alternative format
+                    r'csrf[_-]token["\']\s*:\s*["\']([^"\']+)',  # JS variable format
+                ]:
+                    csrf_match = re.search(pattern, html_content)
+                    if csrf_match:
+                        csrf_token = csrf_match.group(1)
+                        self.logger.info(f"Extracted CSRF token: {csrf_token}")
+                        break
+                        
+                # Try to extract from any script that contains CSRF
+                if not csrf_token:
+                    for script in re.findall(r'<script[^>]*>(.*?)</script>', html_content, re.DOTALL):
+                        csrf_match = re.search(r'csrf[^"\']+["\']([^"\']+)', script)
+                        if csrf_match:
+                            csrf_token = csrf_match.group(1)
+                            self.logger.info(f"Extracted CSRF token from script: {csrf_token}")
+                            break
+            
+            # Add small delay to mimic human behavior
+            await asyncio.sleep(random.uniform(1, 2))
+            
+            # Prepare headers for the API request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
+                'Accept': 'application/json, text/plain, */*',
+                'Referer': f"https://tap.az/elanlar/dasinmaz-emlak/{listing_id}",
+                'Origin': 'https://tap.az',
+                'Connection': 'keep-alive',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin',
+                'DNT': '1'
+            }
+            
+            # Add CSRF token if found
+            if csrf_token:
+                headers['X-CSRF-Token'] = csrf_token
+            
+            # Add random request ID header that tap.az might be expecting
+            headers['X-Request-Id'] = f"{random.randint(1000000, 9999999)}-{int(time.time())}"
+            
+            # Prepare cookies as a dict - both from the session and additional ones
+            cookie_dict = {}
+            for cookie in cookies.values():
+                cookie_dict[cookie.key] = cookie.value
+                
+            # Add the request_method cookie that the curl example shows
+            cookie_dict['request_method'] = 'POST'
+            
+            self.logger.info(f"Making API request to get phone numbers for listing {listing_id}")
+            self.logger.info(f"Request URL: {url}")
+            self.logger.info(f"Using proxy: {self.proxy_url}")
+            
+            # Make the API request with proper headers, cookies, and method
+            # EXPLICITLY USE PROXY HERE
+            async with self.session.post(
+                url,
+                headers=headers,
+                cookies=cookie_dict,
+                proxy=self.proxy_url,  # Critical - ensure proxy is used
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                self.logger.info(f"Phone API response status: {response.status}")
+                
+                if response.status == 200:
+                    # Parse JSON response
+                    try:
+                        data = await response.json()
+                        self.logger.info(f"Successfully retrieved phone numbers: {data}")
+                        
+                        if isinstance(data, dict) and 'phones' in data:
+                            return data['phones']
+                            
+                        self.logger.warning(f"Unexpected response format: {data}")
+                        return []
+                        
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"Failed to parse JSON response: {e}")
+                        response_text = await response.text()
+                        self.logger.error(f"Response content: {response_text[:200]}")
+                        return []
+                else:
+                    self.logger.warning(f"Failed to get phone numbers: status {response.status}")
+                    try:
+                        error_text = await response.text()
+                        self.logger.error(f"Error response: {error_text[:200]}")
+                    except:
+                        pass
+                    return []
+                    
+        except Exception as e:
+            self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
+            self.logger.error(f"Exception type: {type(e).__name__}")
+            return []
     
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
