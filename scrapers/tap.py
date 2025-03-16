@@ -549,37 +549,37 @@ class TapAzScraper:
 
     async def get_phone_numbers(self, listing_id: str) -> List[str]:
         """
-        Fetch phone numbers from tap.az API with enhanced headers and session management.
-        Ensures proxy is used for all requests.
+        Fetch phone numbers from tap.az API with correct headers and request method.
+        Uses POST instead of GET and includes all required headers.
         """
         try:
-            # Debug proxy setup
-            self.logger.info(f"Using proxy for phone number fetch: {self.proxy_url}")
-            
             # Construct the proper API URL
             url = f"https://tap.az/ads/{listing_id}/phones"
             
-            # First visit the actual listing page to get cookies and tokens
+            # First visit the actual listing page to get cookies and CSRF token
             listing_url = f"https://tap.az/elanlar/dasinmaz-emlak/{listing_id}"
             
-            self.logger.info(f"Fetching listing page to get cookies: {listing_url}")
+            self.logger.info(f"Fetching listing page to get cookies and CSRF token: {listing_url}")
             
             # Make sure we have a session
             if not self.session:
                 await self.init_session()
             
-            # First get the listing page to get cookies - EXPLICITLY USE PROXY
+            # First get the listing page to get cookies and CSRF token
             async with self.session.get(
                 listing_url,
-                proxy=self.proxy_url,  # Explicitly use proxy
+                proxy=self.proxy_url,
                 allow_redirects=True,
                 headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
+                    'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
                     'Referer': 'https://tap.az/',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1'
+                    'DNT': '1',
+                    'Sec-Ch-Ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"macOS"',
+                    'Connection': 'keep-alive'
                 }
             ) as response:
                 self.logger.info(f"Listing page response status: {response.status}")
@@ -588,78 +588,60 @@ class TapAzScraper:
                     self.logger.warning(f"Failed to fetch listing page: {response.status}")
                     return []
                 
-                # Store cookies from the listing page
-                cookies = response.cookies
-                
-                # Get the HTML content to extract any CSRF token if needed
+                # Get the HTML content to extract CSRF token
                 html_content = await response.text()
                 
-                # Try to extract CSRF token - both standard and custom formats
+                # Extract CSRF token - using the exact meta tag format seen in tap.az
                 csrf_token = None
-                for pattern in [
-                    r'meta\s+name="csrf-token"\s+content="([^"]+)"',  # Standard format
-                    r'<input[^>]*name="_csrf[^"]*"[^>]*value="([^"]+)"',  # Alternative format
-                    r'csrf[_-]token["\']\s*:\s*["\']([^"\']+)',  # JS variable format
-                ]:
-                    csrf_match = re.search(pattern, html_content)
-                    if csrf_match:
-                        csrf_token = csrf_match.group(1)
-                        self.logger.info(f"Extracted CSRF token: {csrf_token}")
-                        break
-                        
-                # Try to extract from any script that contains CSRF
-                if not csrf_token:
-                    for script in re.findall(r'<script[^>]*>(.*?)</script>', html_content, re.DOTALL):
-                        csrf_match = re.search(r'csrf[^"\']+["\']([^"\']+)', script)
-                        if csrf_match:
-                            csrf_token = csrf_match.group(1)
-                            self.logger.info(f"Extracted CSRF token from script: {csrf_token}")
-                            break
+                csrf_match = re.search(r'<meta name="csrf-token" content="([^"]+)"', html_content)
+                if csrf_match:
+                    csrf_token = csrf_match.group(1)
+                    self.logger.info(f"Extracted CSRF token: {csrf_token}")
+                
+                # Also get any cookies set in the response
+                cookies = {}
+                for cookie_name, cookie in response.cookies.items():
+                    cookies[cookie_name] = cookie.value
+                    self.logger.debug(f"Cookie: {cookie_name}={cookie.value}")
+                
+                # Add request_method cookie which is required
+                cookies['request_method'] = 'POST'
+            
+            if not csrf_token:
+                self.logger.error("Failed to extract CSRF token")
+                return []
             
             # Add small delay to mimic human behavior
-            await asyncio.sleep(random.uniform(1, 2))
+            await asyncio.sleep(random.uniform(0.5, 1.5))
             
-            # Prepare headers for the API request
+            # Prepare headers for the POST request
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept-Language': 'az,en-US;q=0.9,en;q=0.8,ru;q=0.7',
-                'Accept': 'application/json, text/plain, */*',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8,ru;q=0.7,az;q=0.6',
+                'Accept-Encoding': 'gzip, deflate, br',
                 'Referer': f"https://tap.az/elanlar/dasinmaz-emlak/{listing_id}",
                 'Origin': 'https://tap.az',
                 'Connection': 'keep-alive',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrf_token,
                 'Sec-Fetch-Dest': 'empty',
                 'Sec-Fetch-Mode': 'cors',
                 'Sec-Fetch-Site': 'same-origin',
+                'Sec-Ch-Ua': '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"macOS"',
                 'DNT': '1'
             }
             
-            # Add CSRF token if found
-            if csrf_token:
-                headers['X-CSRF-Token'] = csrf_token
+            self.logger.info(f"Making POST request to get phone numbers for listing {listing_id}")
             
-            # Add random request ID header that tap.az might be expecting
-            headers['X-Request-Id'] = f"{random.randint(1000000, 9999999)}-{int(time.time())}"
-            
-            # Prepare cookies as a dict - both from the session and additional ones
-            cookie_dict = {}
-            for cookie in cookies.values():
-                cookie_dict[cookie.key] = cookie.value
-                
-            # Add the request_method cookie that the curl example shows
-            cookie_dict['request_method'] = 'POST'
-            
-            self.logger.info(f"Making API request to get phone numbers for listing {listing_id}")
-            self.logger.info(f"Request URL: {url}")
-            self.logger.info(f"Using proxy: {self.proxy_url}")
-            
-            # Make the API request with proper headers, cookies, and method
-            # EXPLICITLY USE PROXY HERE
+            # Make the POST request with proper headers, cookies, and method
             async with self.session.post(
                 url,
                 headers=headers,
-                cookies=cookie_dict,
-                proxy=self.proxy_url,  # Critical - ensure proxy is used
+                cookies=cookies,
+                proxy=self.proxy_url,
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as response:
                 self.logger.info(f"Phone API response status: {response.status}")
@@ -668,10 +650,12 @@ class TapAzScraper:
                     # Parse JSON response
                     try:
                         data = await response.json()
-                        self.logger.info(f"Successfully retrieved phone numbers: {data}")
+                        self.logger.info(f"Successfully retrieved phone number data")
                         
                         if isinstance(data, dict) and 'phones' in data:
-                            return data['phones']
+                            phones = data['phones']
+                            self.logger.info(f"Found phone numbers: {phones}")
+                            return phones
                             
                         self.logger.warning(f"Unexpected response format: {data}")
                         return []
@@ -694,6 +678,7 @@ class TapAzScraper:
             self.logger.error(f"Error fetching phone numbers for listing {listing_id}: {str(e)}")
             self.logger.error(f"Exception type: {type(e).__name__}")
             return []
+        
     
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
