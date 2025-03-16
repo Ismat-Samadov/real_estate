@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 import random
 import os
+import hashlib
 from bs4 import BeautifulSoup
 import logging
 from typing import Dict, List, Optional, Tuple
@@ -11,34 +12,37 @@ import json
 import time
 
 class UnvanScraper:
-    """Scraper for unvan.az"""
+    """Scraper for unvan.az with enhanced phone number extraction via Ajax"""
     
     BASE_URL = "https://unvan.az"
     LISTINGS_URL = "https://unvan.az/menzil"
+    AJAX_URL = "https://unvan.az/ajax.php"
     
     def __init__(self):
         """Initialize the scraper with configuration"""
         self.logger = logging.getLogger(__name__)
         self.session = None
+        self.proxy_url = None  # Will be set by proxy handler if used
     
     async def init_session(self):
         """Initialize aiohttp session with browser-like headers"""
         if not self.session:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9,az;q=0.8',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
                 'Cache-Control': 'max-age=0',
-                'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                'Sec-Ch-Ua': '"Chromium";v="134", "Not_A-Brand";v="24", "Google Chrome";v="134"',
                 'Sec-Ch-Ua-Mobile': '?0',
                 'Sec-Ch-Ua-Platform': '"macOS"',
                 'Sec-Fetch-Dest': 'document',
                 'Sec-Fetch-Mode': 'navigate',
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1'
+                'Upgrade-Insecure-Requests': '1',
+                'DNT': '1'
             }
             
             self.session = aiohttp.ClientSession(
@@ -55,8 +59,8 @@ class UnvanScraper:
 
     async def get_page_content(self, url: str, params: Optional[Dict] = None) -> str:
         """Fetch page content with retry logic and anti-bot measures"""
-        MAX_RETRIES = int(os.getenv('MAX_RETRIES', 5))
-        DELAY = int(os.getenv('REQUEST_DELAY', 1))
+        MAX_RETRIES = int(os.getenv('MAX_RETRIES', '5'))
+        DELAY = float(os.getenv('REQUEST_DELAY', '1'))
         
         self.logger.info(f"Attempting to fetch URL: {url}")
         start_time = time.time()
@@ -69,7 +73,8 @@ class UnvanScraper:
         }
         
         cookies = {
-            'language': 'az'
+            'language': 'az',
+            # We can add more cookies if needed
         }
         
         for attempt in range(MAX_RETRIES):
@@ -82,7 +87,8 @@ class UnvanScraper:
                     params=params,
                     headers=headers,
                     cookies=cookies,
-                    timeout=aiohttp.ClientTimeout(total=10)
+                    timeout=aiohttp.ClientTimeout(total=15),
+                    proxy=self.proxy_url
                 ) as response:
                     if response.status == 200:
                         content = await response.text()
@@ -105,6 +111,108 @@ class UnvanScraper:
             await asyncio.sleep(DELAY * (attempt + 1))
         
         raise Exception(f"Failed to fetch {url} after {MAX_RETRIES} attempts")
+
+    async def get_phone_numbers_with_params(self, ajax_id: str, ajax_type: str, ajax_hash: str, ajax_rf: str, referer_url: str) -> List[str]:
+        """
+        Fetch phone numbers using parameters extracted from the HTML
+        
+        Args:
+            ajax_id: The ID parameter for the Ajax request
+            ajax_type: The type parameter for the Ajax request
+            ajax_hash: The hash parameter for the Ajax request
+            ajax_rf: The referrer parameter for the Ajax request
+            referer_url: The URL of the listing page (for the Referer header)
+            
+        Returns:
+            List of phone numbers
+        """
+        try:
+            self.logger.info(f"Fetching phone numbers with extracted params - ID: {ajax_id}, Hash: {ajax_hash}, RF: {ajax_rf}")
+            
+            # Prepare the payload with the exact parameters from the HTML
+            payload = {
+                'act': 'telshow',
+                'id': ajax_id,
+                't': ajax_type,
+                'h': ajax_hash,
+                'rf': ajax_rf
+            }
+            
+            self.logger.debug(f"Ajax payload: {payload}")
+            
+            # Set up headers for the Ajax request
+            headers = {
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': 'https://unvan.az',
+                'Referer': referer_url,
+                'X-Requested-With': 'XMLHttpRequest',
+                'DNT': '1',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
+            }
+            
+            # Add cookies from observed requests
+            cookies = {
+                'unv_lang': 'az'
+            }
+            
+            # Add delay to mimic human behavior
+            await asyncio.sleep(random.uniform(1, 2))
+            
+            # Make the POST request
+            async with self.session.post(
+                self.AJAX_URL,
+                data=payload,
+                headers=headers,
+                cookies=cookies,
+                proxy=self.proxy_url,
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                if response.status == 200:
+                    try:
+                        # Try to parse the JSON response
+                        resp_text = await response.text()
+                        self.logger.debug(f"Raw Ajax response: {resp_text}")
+                        
+                        data = json.loads(resp_text)
+                        
+                        # Extract phone numbers from the 'tel' field if available
+                        if data and 'ok' in data and data['ok'] == 1 and 'tel' in data:
+                            # Clean and format phone numbers
+                            phone_numbers = data['tel'].split(',')
+                            cleaned_numbers = []
+                            
+                            for phone in phone_numbers:
+                                # Remove non-digit characters
+                                cleaned = re.sub(r'\D', '', phone)
+                                # Make sure it's a valid length
+                                if len(cleaned) >= 9:
+                                    cleaned_numbers.append(cleaned)
+                            
+                            self.logger.info(f"Successfully retrieved {len(cleaned_numbers)} phone numbers: {cleaned_numbers}")
+                            return cleaned_numbers
+                        else:
+                            # If there's an error in the response
+                            self.logger.warning(f"Ajax response didn't contain valid phone numbers: {data}")
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"Error parsing Ajax response as JSON: {str(e)}")
+                        self.logger.error(f"Response content: {await response.text()}")
+                    except Exception as e:
+                        self.logger.error(f"General error processing Ajax response: {str(e)}")
+                else:
+                    self.logger.warning(f"Ajax request failed with status {response.status}")
+                    
+                    # Try to log the error response
+                    try:
+                        error_text = await response.text()
+                        self.logger.error(f"Error response content: {error_text[:200]}")
+                    except:
+                        pass
+
+        except Exception as e:
+            self.logger.error(f"Error retrieving phone numbers for listing with ID {ajax_id}: {str(e)}")
+
+        return []
 
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
@@ -322,14 +430,25 @@ class UnvanScraper:
                 
         return amenities
 
-    async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
-        """Parse the detailed listing page"""
+    async def parse_listing_detail(self, html: str, listing_id: str, listing_url: str) -> Dict:
+        """
+        Parse the detailed listing page
+        
+        Args:
+            html: HTML content of the listing detail page
+            listing_id: The ID of the listing
+            listing_url: The URL of the listing page (needed for Ajax requests)
+            
+        Returns:
+            Dictionary with parsed listing details
+        """
         soup = BeautifulSoup(html, 'lxml')
         
         try:
             data = {
                 'listing_id': listing_id,
                 'source_website': 'unvan.az',
+                'source_url': listing_url,
                 'updated_at': datetime.datetime.now()
             }
             
@@ -371,24 +490,168 @@ class UnvanScraper:
                 elif 'villa' in prop_type_elem.text.lower():
                     data['property_type'] = 'villa'
             
-            # Extract location info
-            location_elem = soup.select_one('.infop100.linkteshow')
-            if location_elem:
-                addresses = [a.text.strip() for a in location_elem.select('a')]
-                if addresses:
-                    data['district'] = next((addr for addr in addresses if 'rayonu' in addr.lower()), None)
-                    data['metro_station'] = next((addr for addr in addresses if 'metro' in addr.lower()), None)
-                    data['location'] = ' '.join(addresses)
+            # Get phone numbers via Ajax
+            phones = await self.get_phone_numbers_with_params(listing_id, listing_url)
+            if phones:
+                # Store the primary phone number
+                data['contact_phone'] = phones[0]
+                
+                # If there are multiple phone numbers, add them to amenities
+                if len(phones) > 1 and 'amenities' in data:
+                    try:
+                        amenities_data = json.loads(data['amenities'])
+                        # Add phone numbers to amenities
+                        for i, phone in enumerate(phones):
+                            amenities_data.append(f"Phone #{i+1}: {phone}")
+                        # Update amenities
+                        data['amenities'] = json.dumps(amenities_data)
+                    except json.JSONDecodeError:
+                        # If amenities couldn't be parsed as JSON, create a new list
+                        data['amenities'] = json.dumps([f"Phone #{i+1}: {phone}" for i, phone in enumerate(phones)])
             
-            # Extract contact info
+            # Extract contact type
             contact_elem = soup.select_one('.infocontact')
             if contact_elem:
-                phone_elem = contact_elem.select_one('#telshow')
-                if phone_elem:
-                    data['contact_phone'] = phone_elem.text.strip()
-                
                 contact_type = contact_elem.select_one('.glyphicon-user')
-                if contact_type and 'Vastəçi' in contact_type.parent.text:
+                if contact_type and contact_type.parent and 'Vastəçi' in contact_type.parent.text:
+                    data['contact_type'] = 'agent'
+                else:
+                    data['contact_type'] = 'owner'
+            
+            # Extract listing type from title/description
+            title = soup.select_one('h1.leftfloat')
+            if title:
+                title_text = title.text.lower()
+                if 'kirayə' in title_text or 'icarə' in title_text:
+                    if 'günlük' in title_text:
+                        data['listing_type'] = 'daily'
+                    else:
+                        data['listing_type'] = 'monthly'
+                else:
+                    data['listing_type'] = 'sale'
+            
+            # Extract photos
+            photos = []
+            photo_elems = soup.select('#picsopen img[src]')
+            for img in photo_elems:
+                src = img.get('src')
+                if src and not src.endswith('load.gif'):
+                    photos.append(f"{self.BASE_URL}{src}")
+            
+            if photos:
+                data['photos'] = json.dumps(photos)
+            
+            # Extract listing date
+            date_elem = soup.select_one('.viewsbb')
+            if date_elem:
+                try:
+                    date_str = re.search(r'Tarix:\s*(\d{2}\.\d{2}\.\d{4})', date_elem.text).group(1)
+                    data['listing_date'] = datetime.datetime.strptime(date_str, '%d.%m.%Y').date()
+                except (ValueError, AttributeError):
+                    pass
+            
+            return data
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
+            raise
+
+    async def parse_listing_detail(self, html: str, listing_id: str, listing_url: str) -> Dict:
+        """
+        Parse the detailed listing page with enhanced phone number extraction
+        
+        Args:
+            html: HTML content of the listing detail page
+            listing_id: The ID of the listing
+            listing_url: The URL of the listing page (needed for Ajax requests)
+            
+        Returns:
+            Dictionary with parsed listing details
+        """
+        soup = BeautifulSoup(html, 'lxml')
+        
+        try:
+            data = {
+                'listing_id': listing_id,
+                'source_website': 'unvan.az',
+                'source_url': listing_url,
+                'updated_at': datetime.datetime.now()
+            }
+            
+            # Extract address
+            address = self.extract_address(html)
+            if address:
+                data['address'] = address
+                
+            # Extract location information for data fields
+            city, district, neighborhood, metro_station = self.extract_location_info(html)
+            if district:
+                data['district'] = district
+            if metro_station:
+                data['metro_station'] = metro_station
+            if neighborhood:
+                data['location'] = neighborhood
+                
+            # Extract amenities including location info
+            amenities = self.extract_amenities(html)
+            if amenities:
+                data['amenities'] = json.dumps(amenities)
+            
+            # Extract area
+            area_elem = soup.select_one('p:-soup-contains("Sahə")')
+            if area_elem:
+                area_match = re.search(r'(\d+)\s*m²', area_elem.text)
+                if area_match:
+                    data['area'] = float(area_match.group(1))
+            
+            # Extract property type
+            prop_type_elem = soup.select_one('p:-soup-contains("Əmlakın növü")')
+            if prop_type_elem:
+                if 'köhnə tikili' in prop_type_elem.text.lower():
+                    data['property_type'] = 'old'
+                elif 'yeni tikili' in prop_type_elem.text.lower():
+                    data['property_type'] = 'new'
+                elif 'həyət evi' in prop_type_elem.text.lower():
+                    data['property_type'] = 'house'
+                elif 'villa' in prop_type_elem.text.lower():
+                    data['property_type'] = 'villa'
+            
+            # Extract phone hash and parameters from the HTML
+            phone_elem = soup.select_one('#telshow')
+            if phone_elem:
+                # Extract hash and other parameters directly from the HTML
+                ajax_id = phone_elem.get('data-id')
+                ajax_type = phone_elem.get('data-t')
+                ajax_hash = phone_elem.get('data-h')
+                ajax_rf = phone_elem.get('data-rf')
+                
+                self.logger.info(f"Extracted Ajax params from HTML - ID: {ajax_id}, Type: {ajax_type}, Hash: {ajax_hash}, RF: {ajax_rf}")
+                
+                # Make the Ajax request with the extracted parameters
+                if ajax_id and ajax_hash and ajax_rf:
+                    phones = await self.get_phone_numbers_with_params(ajax_id, ajax_type, ajax_hash, ajax_rf, listing_url)
+                    if phones:
+                        # Store the primary phone number
+                        data['contact_phone'] = phones[0]
+                        
+                        # If there are multiple phone numbers, add them to amenities
+                        if len(phones) > 1 and 'amenities' in data:
+                            try:
+                                amenities_data = json.loads(data['amenities'])
+                                # Add phone numbers to amenities
+                                for i, phone in enumerate(phones):
+                                    amenities_data.append(f"Phone #{i+1}: {phone}")
+                                # Update amenities
+                                data['amenities'] = json.dumps(amenities_data)
+                            except json.JSONDecodeError:
+                                # If amenities couldn't be parsed as JSON, create a new list
+                                data['amenities'] = json.dumps([f"Phone #{i+1}: {phone}" for i, phone in enumerate(phones)])
+            
+            # Extract contact type
+            contact_elem = soup.select_one('.infocontact')
+            if contact_elem:
+                contact_type = contact_elem.select_one('.glyphicon-user')
+                if contact_type and contact_type.parent and 'Vastəçi' in contact_type.parent.text:
                     data['contact_type'] = 'agent'
                 else:
                     data['contact_type'] = 'owner'
@@ -434,7 +697,7 @@ class UnvanScraper:
     async def run(self, pages: int = 1):
         """Run the scraper for specified number of pages"""
         try:
-            self.logger.info("Starting Unvan.az scraper")
+            self.logger.info("Starting Unvan.az scraper with enhanced phone number extraction")
             await self.init_session()
             all_results = []
             
@@ -452,7 +715,11 @@ class UnvanScraper:
                     for listing in listings:
                         try:
                             detail_html = await self.get_page_content(listing['source_url'])
-                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                            detail_data = await self.parse_listing_detail(
+                                detail_html, 
+                                listing['listing_id'],
+                                listing['source_url']
+                            )
                             all_results.append({**listing, **detail_data})
                         except Exception as e:
                             self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
