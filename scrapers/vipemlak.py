@@ -97,6 +97,110 @@ class VipEmlakScraper:
             self.logger.debug(f"Failed to extract number from '{text}': {str(e)}")
             return None
 
+    async def get_phone_numbers(self, listing_id: str, listing_url: str) -> List[str]:
+        """
+        Fetch phone numbers using the AJAX endpoint
+        
+        Args:
+            listing_id: The ID of the listing
+            listing_url: The URL of the listing page (for the rf parameter)
+            
+        Returns:
+            List of phone numbers
+        """
+        try:
+            self.logger.info(f"Fetching phone numbers for listing {listing_id}")
+            
+            # First we need to get the page to extract the hash and other parameters
+            detail_html = await self.get_page_content(listing_url)
+            soup = BeautifulSoup(detail_html, 'lxml')
+            
+            # Extract parameters from the #telshow element
+            telshow_elem = soup.select_one('#telshow')
+            if not telshow_elem:
+                self.logger.warning(f"No #telshow element found for listing {listing_id}")
+                return []
+                
+            # Extract the required parameters
+            ajax_id = telshow_elem.get('data-id')
+            ajax_type = telshow_elem.get('data-t')
+            ajax_hash = telshow_elem.get('data-h')
+            ajax_rf = telshow_elem.get('data-rf')
+            
+            if not all([ajax_id, ajax_type, ajax_hash, ajax_rf]):
+                self.logger.warning(f"Missing AJAX parameters for listing {listing_id}")
+                return []
+                
+            self.logger.info(f"Extracted AJAX params - ID: {ajax_id}, Type: {ajax_type}, Hash: {ajax_hash}, RF: {ajax_rf}")
+            
+            # Prepare the payload for the AJAX request
+            payload = {
+                'act': 'telshow',
+                'id': ajax_id,
+                't': ajax_type,
+                'h': ajax_hash,
+                'rf': ajax_rf
+            }
+            
+            # Set up headers for the AJAX request
+            headers = {
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': 'https://vipemlak.az',
+                'Referer': listing_url,
+                'X-Requested-With': 'XMLHttpRequest',
+                'DNT': '1',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36'
+            }
+            
+            # Common cookies that might help with the request
+            cookies = {
+                'vpem_lang': 'az'
+            }
+            
+            # Small delay to mimic human behavior
+            await asyncio.sleep(random.uniform(1, 2))
+            
+            # Make the POST request to the AJAX endpoint
+            async with self.session.post(
+                f"{self.BASE_URL}/ajax.php",
+                data=payload,
+                headers=headers,
+                cookies=cookies,
+                proxy=self.proxy_url
+            ) as response:
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        self.logger.info(f"AJAX response: {data}")
+                        
+                        # Extract the phone number from the response
+                        if data and 'ok' in data and data['ok'] == 1 and 'tel' in data:
+                            phone = data['tel']
+                            # Clean the phone number
+                            clean_phone = re.sub(r'\D', '', phone)
+                            if clean_phone:
+                                self.logger.info(f"Successfully extracted phone number: {clean_phone}")
+                                return [clean_phone]
+                        else:
+                            self.logger.warning(f"No valid phone number in response: {data}")
+                    except json.JSONDecodeError as e:
+                        self.logger.error(f"Error parsing AJAX response as JSON: {str(e)}")
+                        resp_text = await response.text()
+                        self.logger.error(f"Raw response: {resp_text[:200]}")
+                else:
+                    self.logger.warning(f"AJAX request failed with status {response.status}")
+                    try:
+                        error_text = await response.text()
+                        self.logger.error(f"Error response: {error_text[:200]}")
+                    except:
+                        pass
+                        
+        except Exception as e:
+            self.logger.error(f"Error getting phone numbers for listing {listing_id}: {str(e)}")
+            
+        return []
+
     async def parse_listing_page(self, html: str) -> List[Dict]:
         """Parse the listings page and extract basic listing information"""
         listings = []
@@ -164,7 +268,7 @@ class VipEmlakScraper:
                 
         return listings
 
-    async def parse_listing_detail(self, html: str, listing_id: str) -> Dict:
+    async def parse_listing_detail(self, html: str, listing_id: str, listing_url: str) -> Dict:
         """Parse the detailed listing page with enhanced location extraction"""
         soup = BeautifulSoup(html, 'lxml')
         
@@ -172,6 +276,7 @@ class VipEmlakScraper:
             data = {
                 'listing_id': listing_id,
                 'source_website': 'vipemlak.az',
+                'source_url': listing_url,
                 'updated_at': datetime.datetime.now()
             }
             
@@ -364,7 +469,7 @@ class VipEmlakScraper:
                 if metro_match:
                     data['metro_station'] = metro_match.group(1)
                     amenities.append(f"Metro: {metro_match.group(1)} metrosu")
-   
+
                 # Extract district if not already found
                 if not data.get('district'):
                     district_match = re.search(r'(\w+)\s*rayonu', location_text)
@@ -374,20 +479,15 @@ class VipEmlakScraper:
                 
                 data['address'] = location_text
             
-            # Enhanced: Extract location from contact info section
+            # Enhanced: Extract contact info section
             contact_elem = soup.select_one('.infocontact')
             if contact_elem:
-                # Extract phone number
-                phone_elem = contact_elem.select_one('#telshow')
-                if phone_elem:
-                    data['contact_phone'] = phone_elem.text.strip()
-                
                 # Extract contact type
                 contact_type_elem = contact_elem.select_one('.glyphicon-user')
                 if contact_type_elem and contact_type_elem.parent:
                     data['contact_type'] = 'agent' if 'vasitəçi' in contact_type_elem.parent.text.lower() else 'owner'
                 
-                # NEW: Extract location from the map marker icon section
+                # Extract location from the map marker icon section
                 map_marker = contact_elem.select_one('.glyphicon-map-marker')
                 if map_marker:
                     # Get the next sibling text which contains the location
@@ -412,6 +512,12 @@ class VipEmlakScraper:
                         if location_text:
                             data['location'] = location_text
                             amenities.append(f"Location: {location_text}")
+            
+            # Get phone numbers via Ajax
+            phones = await self.get_phone_numbers(listing_id, listing_url)
+            if phones:
+                data['contact_phone'] = phones[0]
+                data['whatsapp_available'] = False  # Default value, set to True if you detect WhatsApp availability
             
             # Extract photos
             photos = []
@@ -507,7 +613,6 @@ class VipEmlakScraper:
             self.logger.error(f"Error parsing listing detail {listing_id}: {str(e)}")
             raise
 
-
     async def run(self, pages: int = 1):
         """Run the scraper for specified number of pages"""
         try:
@@ -529,7 +634,11 @@ class VipEmlakScraper:
                     for listing in listings:
                         try:
                             detail_html = await self.get_page_content(listing['source_url'])
-                            detail_data = await self.parse_listing_detail(detail_html, listing['listing_id'])
+                            detail_data = await self.parse_listing_detail(
+                                detail_html, 
+                                listing['listing_id'], 
+                                listing['source_url']  # Pass the listing URL
+                            )
                             all_results.append({**listing, **detail_data})
                         except Exception as e:
                             self.logger.error(f"Error processing listing {listing['listing_id']}: {str(e)}")
