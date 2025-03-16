@@ -76,12 +76,18 @@ class EV10Scraper:
 
     async def fetch_page_data(self, page: int) -> Optional[Dict]:
         """Fetch page content with retry logic and error handling"""
-        # fallback defaults
-        MAX_RETRIES = int(os.getenv('MAX_RETRIES', '5'))
-        # DELAY = int(os.getenv('REQUEST_DELAY', '1'))
-        DELAY = float(os.getenv('REQUEST_DELAY', '1'))
-
-        
+        # fallback defaults with robust error handling
+        try:
+            MAX_RETRIES = int(os.getenv('MAX_RETRIES', '5'))
+        except (ValueError, TypeError):
+            MAX_RETRIES = 5
+            
+        try:
+            delay_str = os.getenv('REQUEST_DELAY', '1')
+            DELAY = float(delay_str) if delay_str.strip() else 1.0
+        except (ValueError, TypeError, AttributeError):
+            DELAY = 1.0  # Safe default
+            
         params = self.get_request_params(page)
         
         for attempt in range(MAX_RETRIES):
