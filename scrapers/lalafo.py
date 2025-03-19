@@ -616,3 +616,4 @@ class LalafoScraper:
             
         finally:
             await self.close_session()
+            
